@@ -1,0 +1,14 @@
+---
+# Let's Encrypt configuration
+
+letsencrypt_enabled: true
+letsencrypt_staging: false  # Set to true for testing
+
+# Certificate renewal settings
+letsencrypt_auto_renew: true
+letsencrypt_renew_hour: 0
+letsencrypt_renew_minute: 30
+letsencrypt_renew_day_of_month: "*/7"  # Every 7 days
+
+# Challenge type
+letsencrypt_challenge_type: "http-01"  # or "dns-01"

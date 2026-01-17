@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BuildForever - GitLab CI/CD Build Farm</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 BuildForever</h1>
+            <p class="subtitle">GitLab CI/CD Build Farm - Multi-Platform Runners</p>
+        </header>
+
+        <div class="main-content">
+            <form id="deploymentForm">
+                <div class="form-section">
+                    <h2>GitLab Server Configuration</h2>
+                    <div class="form-group">
+                        <label for="domain">GitLab Domain:</label>
+                        <input type="text" id="domain" name="domain" placeholder="gitlab.example.com" required>
+                        <small>The domain where GitLab will be accessible</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" name="email" placeholder="admin@example.com" required>
+                        <small>Email for Let's Encrypt SSL certificate</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="adminPassword">Admin Password:</label>
+                        <input type="password" id="adminPassword" name="adminPassword" required>
+                        <small>Password for GitLab root account</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm Password:</label>
+                        <input type="password" id="confirmPassword" name="confirmPassword" required>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="letsencrypt" name="letsencrypt" checked>
+                            Enable Let's Encrypt SSL
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2>GitLab Runners - Select Build Platforms</h2>
+                    <p class="section-description">Choose which runners to deploy. Each runner will be automatically registered to your GitLab instance.</p>
+
+                    <div class="runner-section">
+                        <h3>Windows Runners (2)</h3>
+                        <div class="runner-grid">
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="windows-10">
+                                <span class="runner-card">
+                                    <strong>Windows 10</strong>
+                                    <small>Desktop builds & testing</small>
+                                </span>
+                            </label>
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="windows-11">
+                                <span class="runner-card">
+                                    <strong>Windows 11</strong>
+                                    <small>Latest desktop platform</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="runner-section">
+                        <h3>Windows Server Runners (2)</h3>
+                        <div class="runner-grid">
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="windows-server-2022">
+                                <span class="runner-card">
+                                    <strong>Windows Server 2022</strong>
+                                    <small>Enterprise builds</small>
+                                </span>
+                            </label>
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="windows-server-2025">
+                                <span class="runner-card">
+                                    <strong>Windows Server 2025</strong>
+                                    <small>Latest server platform</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="runner-section">
+                        <h3>Linux Runners (4)</h3>
+                        <div class="runner-grid">
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="debian">
+                                <span class="runner-card">
+                                    <strong>Debian</strong>
+                                    <small>Stable Linux builds</small>
+                                </span>
+                            </label>
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="ubuntu">
+                                <span class="runner-card">
+                                    <strong>Ubuntu</strong>
+                                    <small>Popular Linux platform</small>
+                                </span>
+                            </label>
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="arch">
+                                <span class="runner-card">
+                                    <strong>Arch Linux</strong>
+                                    <small>Bleeding edge builds</small>
+                                </span>
+                            </label>
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="rocky">
+                                <span class="runner-card">
+                                    <strong>Rocky Linux</strong>
+                                    <small>RHEL-compatible builds</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="runner-section">
+                        <h3>macOS Runner (1)</h3>
+                        <div class="runner-grid">
+                            <label class="runner-option">
+                                <input type="checkbox" name="runners" value="macos">
+                                <span class="runner-card">
+                                    <strong>macOS</strong>
+                                    <small>Apple platform builds</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="runner-actions">
+                        <button type="button" class="btn btn-link" onclick="selectAllRunners()">Select All</button>
+                        <button type="button" class="btn btn-link" onclick="deselectAllRunners()">Deselect All</button>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary">Deploy Build Farm</button>
+                    <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
+                </div>
+            </form>
+
+            <div id="statusSection" class="status-section" style="display: none;">
+                <h2>Deployment Status</h2>
+                <div id="statusMessage" class="status-message"></div>
+                <div id="deploymentProgress" class="deployment-progress"></div>
+                <div id="deploymentLogs" class="logs"></div>
+                <button class="btn btn-secondary" onclick="hideStatus()">Close</button>
+            </div>
+        </div>
+
+        <footer>
+            <p>BuildForever v2.0 | Multi-Platform CI/CD Build Farm</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

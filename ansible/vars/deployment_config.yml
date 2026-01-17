@@ -1,0 +1,23 @@
+---
+# Default deployment configuration
+# This will be overridden by values from config/deployment_config.json
+
+gitlab_version: "latest"
+gitlab_edition: "ce"  # ce (Community Edition) or ee (Enterprise Edition)
+
+# Default paths
+gitlab_config_dir: /srv/gitlab/config
+gitlab_logs_dir: /srv/gitlab/logs
+gitlab_data_dir: /srv/gitlab/data
+
+# Default ports
+gitlab_http_port: 80
+gitlab_https_port: 443
+gitlab_ssh_port: 2222
+
+# Performance settings
+gitlab_unicorn_workers: 2
+gitlab_postgresql_shared_buffers: "256MB"
+
+# Backup settings
+gitlab_backup_keep_time: 604800  # 7 days in seconds

@@ -1,0 +1,26 @@
+---
+# macOS Docker installation tasks
+- name: Check if Homebrew is installed
+  stat:
+    path: /usr/local/bin/brew
+  register: homebrew
+
+- name: Install Homebrew
+  shell: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  when: not homebrew.stat.exists
+
+- name: Install Docker Desktop via Homebrew
+  homebrew_cask:
+    name: docker
+    state: present
+
+- name: Start Docker Desktop
+  shell: open -a Docker
+  ignore_errors: yes
+
+- name: Wait for Docker to be ready
+  shell: docker info
+  register: docker_ready
+  until: docker_ready.rc == 0
+  retries: 30
+  delay: 10

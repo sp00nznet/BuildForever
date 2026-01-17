@@ -1,0 +1,24 @@
+---
+# Arch Linux setup tasks
+- name: Update package database
+  pacman:
+    update_cache: yes
+
+- name: Install Docker
+  pacman:
+    name:
+      - docker
+      - docker-compose
+      - python-pip
+    state: present
+
+- name: Start and enable Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Install Docker Python library
+  pip:
+    name: docker
+    state: present

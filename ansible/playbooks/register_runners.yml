@@ -1,0 +1,186 @@
+---
+# Register GitLab Runners
+
+- name: Register GitLab Runners
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - ../vars/deployment_config.yml
+
+  tasks:
+    - name: Wait for GitLab to be ready
+      uri:
+        url: "https://{{ gitlab_domain }}/-/health"
+        validate_certs: no
+        status_code: 200
+      register: gitlab_health
+      until: gitlab_health.status == 200
+      retries: 60
+      delay: 10
+
+    - name: Get GitLab root token
+      shell: |
+        docker exec gitlab gitlab-rails runner "
+        token = User.find_by_username('root').personal_access_tokens.create(
+          name: 'Runner Registration Token',
+          scopes: [:api]
+        )
+        token.set_token('{{ lookup('password', '/dev/null length=20 chars=ascii_letters,digits') }}')
+        token.save!
+        puts token.token
+        "
+      register: gitlab_token
+      changed_when: false
+
+    - name: Get runner registration token
+      uri:
+        url: "https://{{ gitlab_domain }}/api/v4/runners/registration_token"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ gitlab_token.stdout }}"
+        validate_certs: no
+      register: runner_token
+      retries: 5
+      delay: 10
+
+    - name: Set registration token
+      set_fact:
+        registration_token: "{{ runner_token.json.token }}"
+
+    - name: Register Windows 10 runner
+      shell: |
+        docker exec gitlab-runner-windows-10 gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "mcr.microsoft.com/windows:10.0.19041.1415" \
+          --description "Windows 10 Runner" \
+          --tag-list "windows,windows-10,desktop" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'windows-10' in enabled_runners"
+      register: win10_register
+
+    - name: Register Windows 11 runner
+      shell: |
+        docker exec gitlab-runner-windows-11 gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "mcr.microsoft.com/windows:ltsc2022" \
+          --description "Windows 11 Runner" \
+          --tag-list "windows,windows-11,desktop" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'windows-11' in enabled_runners"
+      register: win11_register
+
+    - name: Register Windows Server 2022 runner
+      shell: |
+        docker exec gitlab-runner-windows-server-2022 gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "mcr.microsoft.com/windows/servercore:ltsc2022" \
+          --description "Windows Server 2022 Runner" \
+          --tag-list "windows,server,2022" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'windows-server-2022' in enabled_runners"
+      register: winserver2022_register
+
+    - name: Register Windows Server 2025 runner
+      shell: |
+        docker exec gitlab-runner-windows-server-2025 gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "mcr.microsoft.com/windows/servercore:ltsc2025" \
+          --description "Windows Server 2025 Runner" \
+          --tag-list "windows,server,2025" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'windows-server-2025' in enabled_runners"
+      register: winserver2025_register
+
+    - name: Register Debian runner
+      shell: |
+        docker exec gitlab-runner-debian gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "debian:latest" \
+          --description "Debian Runner" \
+          --tag-list "linux,debian" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'debian' in enabled_runners"
+      register: debian_register
+
+    - name: Register Ubuntu runner
+      shell: |
+        docker exec gitlab-runner-ubuntu gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "ubuntu:latest" \
+          --description "Ubuntu Runner" \
+          --tag-list "linux,ubuntu" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'ubuntu' in enabled_runners"
+      register: ubuntu_register
+
+    - name: Register Arch Linux runner
+      shell: |
+        docker exec gitlab-runner-arch gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "archlinux:latest" \
+          --description "Arch Linux Runner" \
+          --tag-list "linux,arch" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'arch' in enabled_runners"
+      register: arch_register
+
+    - name: Register Rocky Linux runner
+      shell: |
+        docker exec gitlab-runner-rocky gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "docker" \
+          --docker-image "rockylinux:latest" \
+          --description "Rocky Linux Runner" \
+          --tag-list "linux,rocky,rhel" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'rocky' in enabled_runners"
+      register: rocky_register
+
+    - name: Register macOS runner
+      shell: |
+        docker exec gitlab-runner-macos gitlab-runner register \
+          --non-interactive \
+          --url "https://{{ gitlab_domain }}" \
+          --registration-token "{{ registration_token }}" \
+          --executor "shell" \
+          --description "macOS Runner" \
+          --tag-list "macos,darwin" \
+          --run-untagged="false" \
+          --locked="false"
+      when: "'macos' in enabled_runners"
+      register: macos_register
+
+    - name: Display registration results
+      debug:
+        msg: "All selected runners have been registered successfully"

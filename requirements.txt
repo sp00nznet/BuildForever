@@ -1,0 +1,24 @@
+# BuildForever - Python Requirements
+
+# Flask and web framework
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Automation and orchestration
+ansible==9.0.1
+ansible-core==2.16.0
+
+# Docker support
+docker==7.0.0
+
+# Configuration and data handling
+PyYAML==6.0.1
+Jinja2==3.1.2
+
+# Process management
+subprocess32==3.5.4; python_version < '3.0'
+
+# Utilities
+click==8.1.7
+requests==2.31.0
+python-dotenv==1.0.0

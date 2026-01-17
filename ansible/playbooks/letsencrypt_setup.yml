@@ -1,0 +1,34 @@
+---
+- name: Configure Let's Encrypt SSL
+  hosts: localhost
+  become: yes
+
+  vars_files:
+    - ../vars/letsencrypt_config.yml
+
+  tasks:
+    - name: Load deployment configuration
+      include_vars:
+        file: "{{ playbook_dir }}/../../config/deployment_config.json"
+        name: deployment
+
+    - name: Install certbot
+      package:
+        name:
+          - certbot
+        state: present
+      when: ansible_os_family in ['Debian', 'RedHat']
+
+    - name: Create Let's Encrypt answer file
+      template:
+        src: ../templates/letsencrypt_answers.txt.j2
+        dest: /tmp/letsencrypt_answers.txt
+        mode: '0600'
+
+    - name: Display Let's Encrypt configuration
+      debug:
+        msg:
+          - "Domain: {{ deployment.domain }}"
+          - "Email: {{ deployment.email }}"
+          - "Let's Encrypt will be configured automatically by GitLab"
+          - "Certificate renewal will be handled by GitLab's built-in service"
