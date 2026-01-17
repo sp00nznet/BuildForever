@@ -1,0 +1,41 @@
+---
+# Windows Docker installation tasks
+- name: Check if Docker Desktop is installed
+  win_stat:
+    path: 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+  register: docker_desktop
+
+- name: Download Docker Desktop installer
+  win_get_url:
+    url: https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe
+    dest: C:\Temp\DockerDesktopInstaller.exe
+  when: not docker_desktop.stat.exists
+
+- name: Install Docker Desktop
+  win_package:
+    path: C:\Temp\DockerDesktopInstaller.exe
+    arguments: install --quiet
+    state: present
+  when: not docker_desktop.stat.exists
+
+- name: Wait for Docker Desktop to initialize
+  win_wait_for:
+    timeout: 120
+  when: not docker_desktop.stat.exists
+
+- name: Enable Windows Hyper-V feature
+  win_feature:
+    name: Hyper-V
+    state: present
+  register: hyperv_result
+
+- name: Enable Windows Containers feature
+  win_feature:
+    name: Containers
+    state: present
+  register: containers_result
+
+- name: Reboot if required
+  win_reboot:
+    reboot_timeout: 600
+  when: hyperv_result.reboot_required or containers_result.reboot_required

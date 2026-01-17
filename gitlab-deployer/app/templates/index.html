@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BuildForever - GitLab Deployer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 BuildForever</h1>
+            <p class="subtitle">GitLab Environment Builder - Deploy Anywhere</p>
+        </header>
+
+        <div class="main-content">
+            <form id="deploymentForm">
+                <div class="form-section">
+                    <h2>Platform Selection</h2>
+                    <div class="form-group">
+                        <label for="platform">Platform:</label>
+                        <select id="platform" name="platform" required>
+                            <option value="">Select Platform</option>
+                            <option value="windows">Windows</option>
+                            <option value="linux">Linux</option>
+                            <option value="macos">macOS</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="osVersion">OS Version:</label>
+                        <select id="osVersion" name="osVersion" required>
+                            <option value="">Select OS Version</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <h2>GitLab Configuration</h2>
+                    <div class="form-group">
+                        <label for="domain">Domain:</label>
+                        <input type="text" id="domain" name="domain" placeholder="gitlab.example.com" required>
+                        <small>The domain where GitLab will be accessible</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" name="email" placeholder="admin@example.com" required>
+                        <small>Email for Let's Encrypt SSL certificate</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="adminPassword">Admin Password:</label>
+                        <input type="password" id="adminPassword" name="adminPassword" required>
+                        <small>Password for GitLab admin account</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm Password:</label>
+                        <input type="password" id="confirmPassword" name="confirmPassword" required>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="letsencrypt" name="letsencrypt" checked>
+                            Enable Let's Encrypt SSL
+                        </label>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary">Deploy GitLab</button>
+                    <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
+                </div>
+            </form>
+
+            <div id="statusSection" class="status-section" style="display: none;">
+                <h2>Deployment Status</h2>
+                <div id="statusMessage" class="status-message"></div>
+                <div id="deploymentLogs" class="logs"></div>
+                <button class="btn btn-secondary" onclick="hideStatus()">Close</button>
+            </div>
+        </div>
+
+        <footer>
+            <p>BuildForever v1.0 | Supports Windows, Linux & macOS</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
