@@ -49,3 +49,15 @@ variable "gitlab_data_path" {
   type        = string
   default     = "/srv/gitlab/data"
 }
+
+variable "enabled_runners" {
+  description = "List of enabled GitLab runners"
+  type        = list(string)
+  default     = []
+}
+
+variable "data_dir" {
+  description = "Base directory for runner data"
+  type        = string
+  default     = "/srv/gitlab"
+}

@@ -83,12 +83,14 @@ load_config() {
     export ADMIN_PASSWORD=$(jq -r '.admin_password' "$CONFIG_FILE")
     export LETSENCRYPT_EMAIL=$(jq -r '.email' "$CONFIG_FILE")
     export ENABLE_LETSENCRYPT=$(jq -r '.letsencrypt_enabled' "$CONFIG_FILE")
-    export PLATFORM=$(jq -r '.platform' "$CONFIG_FILE")
-    export OS_VERSION=$(jq -r '.os_version' "$CONFIG_FILE")
+
+    # Get runners list (new for v2.0)
+    export ENABLED_RUNNERS=$(jq -r '.runners | join(",")' "$CONFIG_FILE")
+    RUNNER_COUNT=$(jq -r '.runners | length' "$CONFIG_FILE")
 
     log_success "Configuration loaded"
     log_info "Domain: $GITLAB_DOMAIN"
-    log_info "Platform: $PLATFORM ($OS_VERSION)"
+    log_info "Runners: $RUNNER_COUNT selected"
 }
 
 init_terraform() {
@@ -119,6 +121,73 @@ apply_terraform() {
     terraform apply tfplan
 
     log_success "Terraform applied successfully"
+}
+
+deploy_runners() {
+    if [ -z "$ENABLED_RUNNERS" ] || [ "$ENABLED_RUNNERS" = "" ]; then
+        log_info "No runners selected, skipping runner deployment"
+        return 0
+    fi
+
+    log_info "Deploying GitLab runners..."
+    log_info "Selected runners: $ENABLED_RUNNERS"
+
+    cd "$TERRAFORM_DIR"
+
+    # Convert comma-separated list to JSON array for Terraform
+    RUNNERS_JSON="[\"${ENABLED_RUNNERS//,/\",\"}\"]"
+
+    terraform plan \
+        -var "gitlab_domain=$GITLAB_DOMAIN" \
+        -var "admin_password=$ADMIN_PASSWORD" \
+        -var "letsencrypt_email=$LETSENCRYPT_EMAIL" \
+        -var "enable_letsencrypt=$ENABLE_LETSENCRYPT" \
+        -var "enabled_runners=$RUNNERS_JSON" \
+        -out=tfplan-runners
+
+    terraform apply tfplan-runners
+
+    log_success "Runners deployed successfully"
+}
+
+register_runners() {
+    if [ -z "$ENABLED_RUNNERS" ] || [ "$ENABLED_RUNNERS" = "" ]; then
+        log_info "No runners to register"
+        return 0
+    fi
+
+    log_info "Registering runners with GitLab..."
+
+    cd "$ANSIBLE_DIR"
+
+    # Create deployment vars file for Ansible
+    cat > vars/deployment_config.yml <<EOF
+---
+gitlab_domain: "$GITLAB_DOMAIN"
+enabled_runners:
+EOF
+
+    # Convert comma-separated to YAML list
+    IFS=',' read -ra RUNNERS <<< "$ENABLED_RUNNERS"
+    for runner in "${RUNNERS[@]}"; do
+        echo "  - $runner" >> vars/deployment_config.yml
+    done
+
+    # Run registration playbook
+    ansible-playbook playbooks/register_runners.yml -v
+
+    log_success "All runners registered successfully"
+}
+
+verify_runners() {
+    log_info "Verifying runner connections..."
+
+    # Give runners a moment to connect
+    sleep 5
+
+    local connected_count=$(docker exec gitlab gitlab-rails runner "puts Runner.count" 2>/dev/null || echo "0")
+
+    log_success "$connected_count runner(s) connected to GitLab"
 }
 
 run_ansible() {
@@ -210,7 +279,7 @@ destroy_deployment() {
     log_success "Deployment destroyed"
 }
 
-# Main deployment function
+# Main deployment function (GitLab only)
 deploy() {
     log_info "Starting GitLab deployment..."
     echo ""
@@ -236,6 +305,72 @@ deploy() {
     log_success "Deployment complete!"
 }
 
+# Full deployment function (GitLab + Runners)
+deploy_all() {
+    log_info "Starting GitLab Build Farm deployment..."
+    echo ""
+
+    # Create log directory
+    mkdir -p "$LOG_DIR"
+
+    # Log file
+    LOG_FILE="$LOG_DIR/${GITLAB_DOMAIN}_$(date +%Y%m%d_%H%M%S).log"
+    exec > >(tee -a "$LOG_FILE") 2>&1
+
+    check_requirements
+    load_config
+
+    # Step 1: Deploy GitLab Server
+    log_info "=== Step 1/4: Deploying GitLab Server ==="
+    init_terraform
+    plan_terraform
+    apply_terraform
+    configure_letsencrypt
+    wait_for_gitlab
+
+    # Step 2: Deploy Runners
+    log_info "=== Step 2/4: Deploying GitLab Runners ==="
+    deploy_runners
+
+    # Step 3: Register Runners
+    log_info "=== Step 3/4: Registering Runners ==="
+    register_runners
+
+    # Step 4: Verify
+    log_info "=== Step 4/4: Verifying Installation ==="
+    verify_runners
+
+    display_build_farm_info
+    cleanup
+
+    log_success "Build Farm deployment complete!"
+}
+
+display_build_farm_info() {
+    log_success "GitLab Build Farm deployment completed!"
+    echo ""
+    echo "=========================================="
+    echo "GitLab Build Farm Access Information"
+    echo "=========================================="
+    echo "GitLab URL: https://$GITLAB_DOMAIN"
+    echo "Username: root"
+    echo "Password: [as configured]"
+    echo "SSH Port: 2222"
+    echo ""
+    echo "Runners Deployed: $RUNNER_COUNT"
+    if [ -n "$ENABLED_RUNNERS" ]; then
+        echo "Runner Platforms:"
+        IFS=',' read -ra RUNNERS <<< "$ENABLED_RUNNERS"
+        for runner in "${RUNNERS[@]}"; do
+            echo "  - $runner"
+        done
+    fi
+    echo "=========================================="
+    echo ""
+    log_info "You can now access GitLab at https://$GITLAB_DOMAIN"
+    log_info "Check Admin Area > Runners to see your connected runners"
+}
+
 # Command line interface
 case "${1:-}" in
     init)
@@ -252,21 +387,25 @@ case "${1:-}" in
     deploy)
         deploy
         ;;
+    deploy-all)
+        deploy_all
+        ;;
     destroy)
         load_config
         destroy_deployment
         ;;
     *)
-        echo "BuildForever - GitLab Deployment Script"
+        echo "BuildForever - GitLab Build Farm Deployment Script"
         echo ""
-        echo "Usage: $0 {init|plan|apply|deploy|destroy}"
+        echo "Usage: $0 {init|plan|apply|deploy|deploy-all|destroy}"
         echo ""
         echo "Commands:"
-        echo "  init    - Initialize Terraform"
-        echo "  plan    - Plan Terraform changes"
-        echo "  apply   - Apply Terraform changes"
-        echo "  deploy  - Full deployment (init + plan + apply + ansible)"
-        echo "  destroy - Destroy deployment"
+        echo "  init       - Initialize Terraform"
+        echo "  plan       - Plan Terraform changes"
+        echo "  apply      - Apply Terraform changes"
+        echo "  deploy     - Deploy GitLab server only"
+        echo "  deploy-all - Full deployment (GitLab + Runners)"
+        echo "  destroy    - Destroy deployment"
         echo ""
         exit 1
         ;;

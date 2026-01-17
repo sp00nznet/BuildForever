@@ -1,18 +1,24 @@
 # BuildForever
 
-**Automated GitLab Environment Builder for Multiple Platforms**
+**Multi-Platform GitLab CI/CD Build Farm**
 
-BuildForever is a comprehensive deployment tool that automates GitLab installation and configuration across Windows, Linux, and macOS platforms with a user-friendly web interface.
+BuildForever is a comprehensive deployment tool that creates a complete GitLab CI/CD build farm with runners for multiple platforms. Deploy a fully configured GitLab instance with dedicated runners for Windows (10, 11, Server 2022, 2025), Linux (Debian, Ubuntu, Arch, Rocky), and macOS - all from a user-friendly web interface.
 
 ## Features
 
-- **Multi-Platform Support**: Deploy GitLab on Windows (10, 11, Server 2022, 2025), Linux (Debian, Ubuntu, Arch, Rocky), and macOS
-- **Web Interface**: Easy-to-use Flask-based web UI for configuration and deployment
+- **Complete Build Farm**: Deploy GitLab server + multi-platform runners in one click
+- **9 Platform Runners**:
+  - 2 Windows Desktop (10, 11)
+  - 2 Windows Server (2022, 2025)
+  - 4 Linux Distributions (Debian, Ubuntu, Arch, Rocky)
+  - 1 macOS Runner
+- **Automatic Runner Registration**: All runners auto-register with your GitLab instance
+- **Web Interface**: Easy-to-use Flask-based UI for selecting and deploying runners
 - **Automated SSL**: Built-in Let's Encrypt integration with automatic certificate generation and renewal
 - **Infrastructure as Code**: Terraform for consistent infrastructure provisioning
 - **Configuration Management**: Ansible playbooks for platform-specific setup
-- **One-Click Deployment**: Simple deployment process - just provide domain and password
-- **Fully Automated**: From bare system to fully functional GitLab instance
+- **Tagged Runners**: Each runner pre-configured with platform-specific tags for targeted builds
+- **Fully Automated**: From configuration to fully functional build farm
 
 ## Quick Start
 
@@ -41,33 +47,35 @@ cd BuildForever
 scripts\start.bat
 ```
 
-### Deploy GitLab
+### Deploy Build Farm
 
 1. Open `http://localhost:5000` in your browser
-2. Select your platform and OS version
-3. Enter your domain (e.g., `gitlab.example.com`)
-4. Provide your email for SSL certificates
-5. Set admin password
-6. Click "Deploy GitLab"
+2. Enter your GitLab domain (e.g., `gitlab.example.com`)
+3. Provide your email for SSL certificates
+4. Set admin password
+5. **Select runners** - Choose which platform runners to deploy (Windows, Linux, macOS)
+6. Click "Deploy Build Farm"
 
-That's it! In 15-30 minutes, you'll have a fully functional GitLab instance with SSL.
+That's it! In 30-60 minutes (depending on runner count), you'll have a fully functional GitLab build farm with SSL and all selected runners connected.
 
-## Supported Platforms
+## Available Runners
 
-### Windows
-- Windows 10
-- Windows 11
-- Windows Server 2022
-- Windows Server 2025
+BuildForever can deploy GitLab runners for the following platforms. Select any combination during deployment:
 
-### Linux
-- Debian
-- Ubuntu
-- Arch Linux
-- Rocky Linux
+### Windows Runners (4)
+- **Windows 10** - Desktop builds and testing (tags: `windows`, `windows-10`, `desktop`)
+- **Windows 11** - Latest desktop platform (tags: `windows`, `windows-11`, `desktop`)
+- **Windows Server 2022** - Enterprise builds (tags: `windows`, `server`, `2022`)
+- **Windows Server 2025** - Latest server platform (tags: `windows`, `server`, `2025`)
 
-### macOS
-- macOS 11 (Big Sur) and later
+### Linux Runners (4)
+- **Debian** - Stable Linux builds (tags: `linux`, `debian`)
+- **Ubuntu** - Popular Linux platform (tags: `linux`, `ubuntu`)
+- **Arch Linux** - Bleeding edge builds (tags: `linux`, `arch`)
+- **Rocky Linux** - RHEL-compatible builds (tags: `linux`, `rocky`, `rhel`)
+
+### macOS Runner (1)
+- **macOS** - Apple platform builds (tags: `macos`, `darwin`)
 
 ## Architecture
 
@@ -97,15 +105,46 @@ BuildForever/
 
 ## What You Get
 
-After deployment, you'll have:
+After deployment, you'll have a complete CI/CD build farm:
 
-- GitLab Community Edition running in Docker
-- SSL certificate via Let's Encrypt (auto-renewing)
-- Admin access with your configured password
-- SSH access on port 2222
-- Web interface on ports 80/443
-- Automated backups configured
-- Ready to create users, groups, and repositories
+- **GitLab Community Edition** running in Docker
+- **SSL certificate** via Let's Encrypt (auto-renewing)
+- **Admin access** with your configured password
+- **SSH access** on port 2222
+- **Web interface** on ports 80/443
+- **GitLab Runners** for your selected platforms, all automatically registered
+- **Tagged runners** ready for multi-platform builds in your CI/CD pipelines
+- **Automated backups** configured
+- Ready to create users, groups, repositories, and run multi-platform CI/CD jobs
+
+### Example .gitlab-ci.yml
+
+```yaml
+stages:
+  - build
+  - test
+
+build-windows:
+  stage: build
+  tags:
+    - windows-11
+  script:
+    - echo "Building on Windows 11"
+
+build-linux:
+  stage: build
+  tags:
+    - ubuntu
+  script:
+    - echo "Building on Ubuntu"
+
+test-macos:
+  stage: test
+  tags:
+    - macos
+  script:
+    - echo "Testing on macOS"
+```
 
 ## Access Your GitLab
 
@@ -219,4 +258,12 @@ MIT License
 
 ---
 
-Built with by sp00nznet | Deploy GitLab Anywhere, Anytime
+Built with by sp00nznet | Multi-Platform CI/CD Build Farms Made Easy
+
+## Use Cases
+
+- **Cross-Platform Development**: Test your application on Windows, Linux, and macOS simultaneously
+- **Enterprise CI/CD**: Build and deploy software across multiple operating systems
+- **Quality Assurance**: Run automated tests on all target platforms in parallel
+- **Open Source Projects**: Provide comprehensive platform support for your users
+- **Development Teams**: Give developers access to consistent build environments across all platforms
