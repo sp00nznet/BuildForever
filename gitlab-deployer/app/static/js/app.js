@@ -759,20 +759,33 @@ function setProviderConfig(config) {
 // Get network configuration
 function getNetworkConfig() {
     const useStaticIps = document.getElementById('useStaticIps')?.checked || false;
+
+    // If not using static IPs, return DHCP config
+    if (!useStaticIps) {
+        return { use_dhcp: true };
+    }
+
     const config = {
-        use_static_ips: useStaticIps,
+        use_dhcp: false,
         subnet: document.getElementById('networkSubnet')?.value || '',
         gateway: document.getElementById('networkGateway')?.value || '',
-        dns: document.getElementById('networkDns')?.value || '',
+        dns: document.getElementById('networkDns')?.value || '8.8.8.8',
         ip_assignments: {}
     };
 
-    // Collect all IP assignments (including dynamically added runner IPs)
-    document.querySelectorAll('#ipAssignments .ip-assignment-row').forEach(row => {
-        const input = row.querySelector('input.ip-input');
-        if (input && input.id) {
-            const hostId = input.id.replace('ip-', '');
-            config.ip_assignments[hostId] = input.value || '';
+    // Get GitLab IP
+    const gitlabIp = document.getElementById('ip-gitlab')?.value?.trim();
+    if (gitlabIp) {
+        config.ip_assignments['gitlab'] = gitlabIp;
+    }
+
+    // Collect all runner IP assignments
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const ipInput = document.getElementById(`ip-${runner}`);
+        const ip = ipInput?.value?.trim();
+        if (ip) {
+            config.ip_assignments[runner] = ip;
         }
     });
 
@@ -783,10 +796,10 @@ function getNetworkConfig() {
 function setNetworkConfig(config) {
     if (!config) return;
 
-    // Set the static IPs checkbox
+    // Set the static IPs checkbox (use_dhcp: false means static IPs are enabled)
     const useStaticIps = document.getElementById('useStaticIps');
     if (useStaticIps) {
-        useStaticIps.checked = config.use_static_ips || false;
+        useStaticIps.checked = !config.use_dhcp;
         toggleStaticIpConfig(); // Show/hide the static IP config section
     }
 
@@ -1360,40 +1373,7 @@ function getRunnerDisplayName(runner) {
     return names[runner] || runner;
 }
 
-// Collect network configuration
-function getNetworkConfig() {
-    const useStaticIps = document.getElementById('useStaticIps')?.checked || false;
-
-    if (!useStaticIps) {
-        return { use_dhcp: true };
-    }
-
-    const config = {
-        use_dhcp: false,
-        subnet: document.getElementById('networkSubnet')?.value || '',
-        gateway: document.getElementById('networkGateway')?.value || '',
-        dns: document.getElementById('networkDns')?.value || '8.8.8.8',
-        ip_assignments: {}
-    };
-
-    // Get GitLab IP
-    const gitlabIp = document.getElementById('ip-gitlab')?.value?.trim();
-    if (gitlabIp) {
-        config.ip_assignments['gitlab'] = gitlabIp;
-    }
-
-    // Get runner IPs
-    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
-        const runner = checkbox.value;
-        const ipInput = document.getElementById(`ip-${runner}`);
-        const ip = ipInput?.value?.trim();
-        if (ip) {
-            config.ip_assignments[runner] = ip;
-        }
-    });
-
-    return config;
-}
+// NOTE: getNetworkConfig() is defined earlier in this file (around line 760)
 
 // Update IP assignments when runners change
 document.addEventListener('DOMContentLoaded', function() {
