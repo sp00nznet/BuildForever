@@ -537,6 +537,8 @@ def execute_proxmox_deployment(config, deployment_id):
                     windows_isos = provider_config.get('windows_isos', {})
                     user_selected_iso = windows_isos.get(runner, '')
                     iso_storage = provider_config.get('iso_storage', 'local')
+                    # Get VirtIO drivers ISO (applies to all Windows VMs)
+                    virtio_iso = provider_config.get('virtio_iso', '')
                     windows_iso = None
                     windows_floppy = None
                     iso_source = 'none'
@@ -590,6 +592,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         bridge=bridge,
                         iso=windows_iso,
                         floppy=windows_floppy,
+                        virtio_iso=virtio_iso if virtio_iso else None,
                         is_windows=True
                     )
 
@@ -604,6 +607,10 @@ def execute_proxmox_deployment(config, deployment_id):
                         else:
                             iso_status = 'ISO creation failed'
 
+                        # Add VirtIO info to status
+                        if virtio_iso:
+                            iso_status += ' + VirtIO drivers'
+
                         cred_info = {
                             'credential': deploy_credential['name'] if deploy_credential else 'default',
                             'credential_user': win_username,
@@ -615,6 +622,7 @@ def execute_proxmox_deployment(config, deployment_id):
                             'os': runner,
                             'status': f'created ({iso_status})',
                             'iso': windows_iso,
+                            'virtio_iso': virtio_iso if virtio_iso else None,
                             'iso_source': iso_source,
                             'ip_config': runner_ip_config,
                             'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk',

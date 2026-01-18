@@ -831,7 +831,8 @@ echo "SUCCESS: $FLOPPY_PATH"
             return {'success': False, 'error': str(e)}
 
     def _get_windows_autounattend_xml(self, windows_type, username, password,
-                                       static_ip=None, gateway=None, dns='8.8.8.8'):
+                                       static_ip=None, gateway=None, dns='8.8.8.8',
+                                       include_virtio_drivers=True):
         """Generate autounattend.xml for unattended Windows installation."""
 
         # Determine Windows image name based on type
@@ -842,6 +843,41 @@ echo "SUCCESS: $FLOPPY_PATH"
             'windows-server-2025': 'Windows Server 2025 SERVERSTANDARD',
         }
         image_name = image_names.get(windows_type, 'Windows 10 Pro')
+
+        # VirtIO driver paths for Windows Setup to find drivers on the VirtIO ISO (E:)
+        # These allow Windows to detect the VirtIO SCSI disk during installation
+        virtio_driver_paths = ''
+        if include_virtio_drivers:
+            # Map Windows type to VirtIO driver folder names
+            virtio_folder_map = {
+                'windows-10': 'w10',
+                'windows-11': 'w11',
+                'windows-server-2022': '2k22',
+                'windows-server-2025': '2k25',
+            }
+            virtio_folder = virtio_folder_map.get(windows_type, 'w10')
+
+            virtio_driver_paths = f'''
+            <DriverPaths>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+                    <Path>E:\\vioscsi\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+                    <Path>E:\\viostor\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+                    <Path>E:\\NetKVM\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="4">
+                    <Path>E:\\Balloon\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="5">
+                    <Path>E:\\qxldod\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+                <PathAndCredentials wcm:action="add" wcm:keyValue="6">
+                    <Path>E:\\vioserial\\{virtio_folder}\\amd64</Path>
+                </PathAndCredentials>
+            </DriverPaths>'''
 
         # Network configuration
         if static_ip:
@@ -881,8 +917,30 @@ echo "SUCCESS: $FLOPPY_PATH"
         else:
             network_config = ''
 
+        # VirtIO guest tools installation command (runs after first logon)
+        virtio_install_cmd = ''
+        if include_virtio_drivers:
+            virtio_install_cmd = '''
+                <SynchronousCommand wcm:action="add">
+                    <Order>3</Order>
+                    <CommandLine>cmd /c if exist E:\\virtio-win-guest-tools.exe E:\\virtio-win-guest-tools.exe /S</CommandLine>
+                    <Description>Install VirtIO Guest Tools (includes QEMU Guest Agent)</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>4</Order>
+                    <CommandLine>cmd /c if exist E:\\guest-agent\\qemu-ga-x86_64.msi msiexec /i E:\\guest-agent\\qemu-ga-x86_64.msi /qn</CommandLine>
+                    <Description>Install QEMU Guest Agent (fallback)</Description>
+                </SynchronousCommand>'''
+
+        # Driver paths component for windowsPE (only if VirtIO enabled)
+        pnp_component = ''
+        if include_virtio_drivers and virtio_driver_paths:
+            pnp_component = f'''
+        <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">{virtio_driver_paths}
+        </component>'''
+
         return f'''<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
     <settings pass="windowsPE">
         <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
             <SetupUILanguage>
@@ -892,7 +950,7 @@ echo "SUCCESS: $FLOPPY_PATH"
             <SystemLocale>en-US</SystemLocale>
             <UILanguage>en-US</UILanguage>
             <UserLocale>en-US</UserLocale>
-        </component>
+        </component>{pnp_component}
         <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
             <DiskConfiguration>
                 <Disk wcm:action="add">
@@ -1007,7 +1065,7 @@ echo "SUCCESS: $FLOPPY_PATH"
                     <Order>2</Order>
                     <CommandLine>cmd /c if exist C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd call C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd</CommandLine>
                     <Description>Run SetupComplete script</Description>
-                </SynchronousCommand>
+                </SynchronousCommand>{virtio_install_cmd}
             </FirstLogonCommands>
         </component>
     </settings>
@@ -1191,8 +1249,8 @@ echo GitLab Runner installation complete!
     # =========================================================================
 
     def create_vm(self, node, vmid, name, memory, cores, storage, disk_size,
-                  bridge='vmbr0', ostype='l26', iso=None, floppy=None, bios='seabios',
-                  machine='pc', cpu='host', is_macos=False, is_windows=False):
+                  bridge='vmbr0', ostype='l26', iso=None, floppy=None, virtio_iso=None,
+                  bios='seabios', machine='pc', cpu='host', is_macos=False, is_windows=False):
         """Create a QEMU VM."""
         params = {
             'vmid': vmid,
@@ -1215,6 +1273,10 @@ echo GitLab Runner installation complete!
             params['boot'] = 'order=ide2;scsi0'
         else:
             params['boot'] = 'order=scsi0'
+
+        # VirtIO drivers ISO attachment (secondary CD-ROM for Windows)
+        if virtio_iso:
+            params['ide3'] = f'{virtio_iso},media=cdrom'
 
         # Floppy image attachment (for autounattend.xml with Windows)
         if floppy:
@@ -1462,6 +1524,11 @@ set -e
 apt-get update
 apt-get install -y curl openssh-server ca-certificates tzdata perl
 
+# Install QEMU Guest Agent for Proxmox integration
+apt-get install -y qemu-guest-agent
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+
 # Add GitLab repository
 curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
 
@@ -1504,18 +1571,65 @@ def get_runner_install_script(runner_type, gitlab_url, registration_token):
 
 def get_linux_runner_script(distro, gitlab_url, registration_token):
     """Get Linux runner installation script."""
+    # Determine package manager and qemu-guest-agent package name
+    if distro in ['debian', 'ubuntu']:
+        install_qemu_ga = '''
+# Install QEMU Guest Agent for Proxmox integration
+apt-get install -y qemu-guest-agent
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+'''
+        install_runner = '''
+# Install GitLab Runner
+curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | bash
+apt-get install -y gitlab-runner
+'''
+    elif distro == 'rocky':
+        install_qemu_ga = '''
+# Install QEMU Guest Agent for Proxmox integration
+dnf install -y qemu-guest-agent
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+'''
+        install_runner = '''
+# Install GitLab Runner
+curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | bash
+dnf install -y gitlab-runner
+'''
+    elif distro == 'arch':
+        install_qemu_ga = '''
+# Install QEMU Guest Agent for Proxmox integration
+pacman -Sy --noconfirm qemu-guest-agent
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+'''
+        install_runner = '''
+# Install GitLab Runner from AUR or binary
+curl -L "https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64" -o /usr/local/bin/gitlab-runner
+chmod +x /usr/local/bin/gitlab-runner
+gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+'''
+    else:
+        install_qemu_ga = '''
+# Install QEMU Guest Agent for Proxmox integration
+apt-get install -y qemu-guest-agent || dnf install -y qemu-guest-agent || pacman -Sy --noconfirm qemu-guest-agent
+systemctl enable qemu-guest-agent
+systemctl start qemu-guest-agent
+'''
+        install_runner = '''
+# Install GitLab Runner
+curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | bash
+apt-get install -y gitlab-runner
+'''
+
     return f'''#!/bin/bash
 set -e
-
+{install_qemu_ga}
 # Install Docker
 curl -fsSL https://get.docker.com | sh
 systemctl enable docker
 systemctl start docker
-
-# Install GitLab Runner
-curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | bash
-apt-get install -y gitlab-runner
-
+{install_runner}
 # Register runner
 gitlab-runner register \\
     --non-interactive \\
