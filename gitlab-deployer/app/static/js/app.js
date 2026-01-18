@@ -1,3 +1,6 @@
+// GitLab server resource requirements (base requirement)
+const GITLAB_SERVER_RESOURCES = { cpu: 4, memory: 8, storage: 50 };
+
 // Runner resource requirements (CPU cores, Memory GB, Storage GB)
 const RUNNER_RESOURCES = {
     'windows-10': { cpu: 4, memory: 8, storage: 60 },
@@ -127,10 +130,12 @@ function updateSelectedCount() {
 
 // Calculate and update resource totals
 function updateResourceTotals() {
-    let totalCpu = 0;
-    let totalMemory = 0;
-    let totalStorage = 0;
+    // Start with GitLab server requirements
+    let totalCpu = GITLAB_SERVER_RESOURCES.cpu;
+    let totalMemory = GITLAB_SERVER_RESOURCES.memory;
+    let totalStorage = GITLAB_SERVER_RESOURCES.storage;
 
+    // Add runner requirements
     document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
         const runner = checkbox.value;
         const resources = RUNNER_RESOURCES[runner];
