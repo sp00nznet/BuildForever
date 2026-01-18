@@ -568,6 +568,7 @@ function saveCurrentConfig() {
         storage: proxmoxConfig.storage,
         iso_storage: proxmoxConfig.iso_storage,
         bridge: proxmoxConfig.bridge,
+        virtio_iso: proxmoxConfig.virtio_iso,
         windows_isos: proxmoxConfig.windows_isos
     };
 
@@ -707,6 +708,8 @@ function getProviderConfig() {
         storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
         iso_storage: document.getElementById('proxmoxIsoStorage')?.value || 'local',
         bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0',
+        // VirtIO drivers ISO for all Windows VMs
+        virtio_iso: document.getElementById('isoVirtio')?.value || '',
         // Individual Windows ISOs for each version
         windows_isos: {
             'windows-10': document.getElementById('isoWindows10')?.value || '',
@@ -730,6 +733,9 @@ function setProviderConfig(config) {
     if (document.getElementById('proxmoxStorage')) document.getElementById('proxmoxStorage').value = config.storage || '';
     if (document.getElementById('proxmoxIsoStorage')) document.getElementById('proxmoxIsoStorage').value = config.iso_storage || 'local';
     if (document.getElementById('proxmoxBridge')) document.getElementById('proxmoxBridge').value = config.bridge || '';
+
+    // Set VirtIO ISO if available
+    if (document.getElementById('isoVirtio')) document.getElementById('isoVirtio').value = config.virtio_iso || '';
 
     // Set Windows ISOs if available
     if (config.windows_isos) {
@@ -849,16 +855,17 @@ function refreshProxmoxIsos() {
     });
 }
 
-// Update all 4 Windows ISO dropdowns
+// Update all Windows ISO dropdowns and VirtIO dropdown
 function updateAllIsoDropdowns(isos) {
-    const dropdowns = [
+    // Windows ISO dropdowns
+    const windowsDropdowns = [
         'isoWindows10',
         'isoWindows11',
         'isoWindowsServer2022',
         'isoWindowsServer2025'
     ];
 
-    dropdowns.forEach(dropdownId => {
+    windowsDropdowns.forEach(dropdownId => {
         const select = document.getElementById(dropdownId);
         if (!select) return;
 
@@ -881,6 +888,30 @@ function updateAllIsoDropdowns(isos) {
             select.value = currentValue;
         }
     });
+
+    // Update VirtIO dropdown separately - look for virtio ISOs
+    const virtioSelect = document.getElementById('isoVirtio');
+    if (virtioSelect) {
+        const currentVirtioValue = virtioSelect.value;
+        virtioSelect.innerHTML = '<option value="">-- Select VirtIO ISO --</option>';
+
+        isos.forEach(iso => {
+            const option = document.createElement('option');
+            option.value = iso.volid;
+            // Highlight VirtIO ISOs
+            const isVirtio = iso.filename.toLowerCase().includes('virtio');
+            option.textContent = `${iso.filename} (${iso.size_display})${isVirtio ? ' [VirtIO]' : ''}`;
+            if (isVirtio) {
+                option.style.fontWeight = 'bold';
+            }
+            virtioSelect.appendChild(option);
+        });
+
+        // Restore selection if it still exists
+        if (currentVirtioValue) {
+            virtioSelect.value = currentVirtioValue;
+        }
+    }
 }
 
 // Update ISO list display
