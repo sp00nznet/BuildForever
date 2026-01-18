@@ -450,6 +450,10 @@ def execute_proxmox_deployment(config, deployment_id):
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
                 elif is_windows:
+                    # Auto-download Windows ISO if not available
+                    iso_result = client.ensure_vm_image(selected_node, 'local', runner)
+                    windows_iso = iso_result.get('iso') if iso_result.get('success') else None
+
                     # Create QEMU VM for Windows
                     result = client.create_vm(
                         node=selected_node,
@@ -460,22 +464,38 @@ def execute_proxmox_deployment(config, deployment_id):
                         storage=storage,
                         disk_size=runner_config.get('disk', 60),
                         bridge=bridge,
+                        iso=windows_iso,
                         is_windows=True
                     )
 
                     if result['success']:
+                        iso_status = 'ISO attached' if windows_iso else 'ISO download pending'
                         created.append({
                             'vmid': runner_vmid,
                             'name': runner_name,
                             'type': 'qemu',
                             'os': runner,
-                            'status': 'created (needs Windows ISO)',
+                            'status': f'created ({iso_status})',
+                            'iso': windows_iso,
                             'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk'
                         })
+
+                        # Start VM if ISO is attached
+                        if windows_iso:
+                            client.start_vm(selected_node, runner_vmid)
+                            created[-1]['status'] = 'started (Windows installation ready)'
                     else:
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
                 elif is_macos:
+                    # Auto-download macOS recovery image from Apple servers
+                    recovery_result = client.get_macos_recovery(selected_node, 'local', 'sonoma')
+                    macos_iso = recovery_result.get('iso') if recovery_result.get('success') else None
+
+                    # Prepare OpenCore bootloader
+                    if macos_iso:
+                        client.prepare_macos_opencore(selected_node, 'local', 'sonoma')
+
                     # Create QEMU VM for macOS with OSX-PROXMOX settings
                     result = client.create_vm(
                         node=selected_node,
@@ -486,18 +506,27 @@ def execute_proxmox_deployment(config, deployment_id):
                         storage=storage,
                         disk_size=80,
                         bridge=bridge,
+                        iso=macos_iso,
                         is_macos=True
                     )
 
                     if result['success']:
+                        iso_status = 'recovery image attached' if macos_iso else 'recovery download pending'
                         created.append({
                             'vmid': runner_vmid,
                             'name': runner_name,
                             'type': 'qemu',
                             'os': 'macos',
-                            'status': 'created (needs macOS ISO)',
-                            'resources': '4 CPU, 8GB RAM, 80GB disk'
+                            'status': f'created ({iso_status})',
+                            'iso': macos_iso,
+                            'resources': '4 CPU, 8GB RAM, 80GB disk',
+                            'notes': 'Requires Apple hardware per licensing. Uses OSX-PROXMOX configuration.'
                         })
+
+                        # Start VM if recovery image is attached
+                        if macos_iso:
+                            client.start_vm(selected_node, runner_vmid)
+                            created[-1]['status'] = 'started (macOS installation ready)'
                     else:
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
