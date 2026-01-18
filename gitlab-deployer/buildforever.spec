@@ -55,6 +55,17 @@ hiddenimports = [
     # Cryptography (for secure storage)
     'cryptography',
     'cryptography.fernet',
+
+    # Infrastructure providers
+    'proxmoxer',
+    'proxmoxer.core',
+    'proxmoxer.backends',
+    'proxmoxer.backends.https',
+    'pyvmomi',
+    'pyVim',
+    'pyVim.connect',
+    'pyVmomi',
+    'pyVmomi.VmomiSupport',
 ]
 
 # Data files to include

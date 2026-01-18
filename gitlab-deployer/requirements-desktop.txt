@@ -12,5 +12,9 @@ pywebview>=4.4.0
 # - pythonnet (for .NET integration with Windows webview)
 # - pywin32 (for Windows API access)
 
+# Infrastructure providers (for testing connections)
+proxmoxer>=2.0.1
+pyvmomi>=8.0.2.0.1
+
 # These dependencies are supplementary to the base requirements.txt
 # and are specifically needed to build the standalone Windows executable.
