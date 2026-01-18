@@ -15,6 +15,7 @@ services:
       - FLASK_ENV=${FLASK_ENV:-production}
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
       - TZ=${TZ:-UTC}
+      - TRAEFIK_ENABLED=${TRAEFIK_ENABLED:-false}
     volumes:
       # Persist configuration and logs
       - ./config:/app/config
@@ -30,6 +31,64 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.buildforever.rule=Host(`${BUILDFOREVER_DOMAIN:-buildforever.local}`)"
+      - "traefik.http.routers.buildforever.entrypoints=websecure"
+      - "traefik.http.routers.buildforever.tls.certresolver=letsencrypt"
+      - "traefik.http.services.buildforever.loadbalancer.server.port=5000"
+
+  # Traefik Reverse Proxy (optional - enable with --profile traefik)
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik-proxy
+    restart: unless-stopped
+    profiles:
+      - traefik
+    command:
+      # API and Dashboard
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=buildforever-net"
+      # File provider for dynamic configuration
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # HTTP to HTTPS redirect
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Let's Encrypt ACME
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      # Logging
+      - "--log.level=${TRAEFIK_LOG_LEVEL:-INFO}"
+      - "--accesslog=true"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard (secure in production!)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - buildforever-network
+    labels:
+      # Dashboard routing
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${BASE_DOMAIN:-local}`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+      # Basic auth for dashboard (generate with: htpasswd -nb admin password)
+      - "traefik.http.routers.traefik-dashboard.middlewares=traefik-auth"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$xyz$$hashedpassword}"
 
   # GitLab CE Server (optional - enable when deploying)
   gitlab:
@@ -48,9 +107,10 @@ services:
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
         unicorn['worker_processes'] = 2
         postgresql['shared_buffers'] = "256MB"
+        # When using Traefik, disable internal SSL
+        nginx['listen_https'] = false
+        nginx['listen_port'] = 80
     ports:
-      - "80:80"
-      - "443:443"
       - "2222:22"
     volumes:
       - gitlab-config:/etc/gitlab
@@ -59,6 +119,12 @@ services:
     networks:
       - buildforever-network
     shm_size: '256m'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitlab.rule=Host(`${GITLAB_HOSTNAME:-gitlab.local}`)"
+      - "traefik.http.routers.gitlab.entrypoints=websecure"
+      - "traefik.http.routers.gitlab.tls.certresolver=letsencrypt"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=80"
 
   # GitLab Runner (template - scale as needed)
   gitlab-runner:
@@ -89,3 +155,5 @@ volumes:
     name: gitlab-data
   gitlab-runner-config:
     name: gitlab-runner-config
+  traefik-letsencrypt:
+    name: traefik-letsencrypt

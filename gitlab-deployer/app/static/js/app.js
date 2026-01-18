@@ -10,6 +10,12 @@ document.addEventListener('DOMContentLoaded', function() {
         checkbox.addEventListener('change', updateSelectedCount);
     });
 
+    // Traefik toggle handler
+    const traefikCheckbox = document.getElementById('traefik');
+    if (traefikCheckbox) {
+        traefikCheckbox.addEventListener('change', toggleTraefikOptions);
+    }
+
     // Form submission handler
     deploymentForm.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -41,7 +47,11 @@ document.addEventListener('DOMContentLoaded', function() {
             email: document.getElementById('email').value,
             admin_password: adminPassword,
             letsencrypt_enabled: document.getElementById('letsencrypt').checked,
-            runners: selectedRunners
+            runners: selectedRunners,
+            // Traefik settings
+            traefik_enabled: document.getElementById('traefik').checked,
+            base_domain: document.getElementById('baseDomain')?.value || '',
+            traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false
         };
 
         // Show loading status
@@ -84,6 +94,28 @@ function updateSelectedCount() {
     const countDisplay = document.querySelector('.selected-count');
     if (countDisplay) {
         countDisplay.textContent = `${count} selected`;
+    }
+}
+
+// Toggle Traefik options visibility
+function toggleTraefikOptions() {
+    const traefikCheckbox = document.getElementById('traefik');
+    const traefikOptions = document.getElementById('traefikOptions');
+
+    if (traefikOptions) {
+        if (traefikCheckbox.checked) {
+            traefikOptions.style.display = 'block';
+            // Auto-populate base domain from GitLab domain
+            const domain = document.getElementById('domain').value;
+            if (domain && !document.getElementById('baseDomain').value) {
+                const parts = domain.split('.');
+                if (parts.length > 1) {
+                    document.getElementById('baseDomain').value = parts.slice(-2).join('.');
+                }
+            }
+        } else {
+            traefikOptions.style.display = 'none';
+        }
     }
 }
 
@@ -308,6 +340,19 @@ function loadSavedConfig() {
 
                 document.getElementById('letsencrypt').checked = config.letsencrypt_enabled;
 
+                // Traefik settings
+                const traefikCheckbox = document.getElementById('traefik');
+                if (traefikCheckbox) {
+                    traefikCheckbox.checked = config.traefik_enabled || false;
+                    toggleTraefikOptions();
+                }
+                if (config.base_domain && document.getElementById('baseDomain')) {
+                    document.getElementById('baseDomain').value = config.base_domain;
+                }
+                if (document.getElementById('traefikDashboard')) {
+                    document.getElementById('traefikDashboard').checked = config.traefik_dashboard !== false;
+                }
+
                 // Set runner checkboxes
                 document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
                     checkbox.checked = config.runners && config.runners.includes(checkbox.value);
@@ -363,7 +408,11 @@ function saveCurrentConfig() {
         domain: domain,
         email: email,
         letsencrypt_enabled: document.getElementById('letsencrypt').checked,
-        runners: selectedRunners
+        runners: selectedRunners,
+        // Traefik settings
+        traefik_enabled: document.getElementById('traefik')?.checked || false,
+        base_domain: document.getElementById('baseDomain')?.value || '',
+        traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false
     };
 
     // Include password if checkbox is checked

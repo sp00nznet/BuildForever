@@ -61,3 +61,40 @@ variable "data_dir" {
   type        = string
   default     = "/srv/gitlab"
 }
+
+# Traefik Reverse Proxy Variables
+variable "enable_traefik" {
+  description = "Enable Traefik reverse proxy"
+  type        = bool
+  default     = false
+}
+
+variable "traefik_container_name" {
+  description = "Name for the Traefik container"
+  type        = string
+  default     = "traefik"
+}
+
+variable "base_domain" {
+  description = "Base domain for all services"
+  type        = string
+  default     = ""
+}
+
+variable "traefik_dashboard_enabled" {
+  description = "Enable Traefik dashboard"
+  type        = bool
+  default     = true
+}
+
+variable "traefik_config_path" {
+  description = "Host path for Traefik configuration"
+  type        = string
+  default     = "/srv/traefik"
+}
+
+variable "traefik_acme_path" {
+  description = "Host path for Traefik ACME certificates"
+  type        = string
+  default     = "/srv/traefik/acme"
+}
