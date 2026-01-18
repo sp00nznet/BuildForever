@@ -529,8 +529,9 @@ def execute_proxmox_deployment(config, deployment_id):
                     win_username = deploy_credential['username'] if deploy_credential else 'Admin'
                     win_password = deploy_credential.get('password', 'BuildForever!') if deploy_credential else 'BuildForever!'
 
-                    # Check if user selected a specific ISO from Proxmox storage
-                    user_selected_iso = provider_config.get('windows_iso', '')
+                    # Check if user selected a specific ISO for this Windows version
+                    windows_isos = provider_config.get('windows_isos', {})
+                    user_selected_iso = windows_isos.get(runner, '')
                     windows_iso = None
                     iso_source = 'none'
 
@@ -540,9 +541,10 @@ def execute_proxmox_deployment(config, deployment_id):
                         iso_source = 'user-selected'
                     else:
                         # Try to create unattended Windows ISO with credentials baked in
+                        iso_storage = provider_config.get('iso_storage', 'local')
                         iso_result = client.create_unattended_windows_iso(
                             node=selected_node,
-                            storage='local',
+                            storage=iso_storage,
                             windows_type=runner,
                             username=win_username,
                             password=win_password,
