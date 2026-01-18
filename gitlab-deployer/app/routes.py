@@ -323,6 +323,14 @@ def execute_proxmox_deployment(config, deployment_id):
         if credential_id:
             deploy_credential = Credential.get_by_id(credential_id, include_secrets=True)
 
+        # Container root password (Proxmox requires minimum 5 characters)
+        # Use credential password if available, otherwise use a secure default
+        container_password = 'buildforever'  # Default 5+ char password
+        if deploy_credential and deploy_credential.get('password'):
+            cred_pass = deploy_credential['password']
+            # Ensure password meets Proxmox minimum length requirement
+            container_password = cred_pass if len(cred_pass) >= 5 else 'buildforever'
+
         # Get network configuration
         network_config = config.get('network_config', {'use_dhcp': True})
         use_dhcp = network_config.get('use_dhcp', True)
@@ -380,7 +388,7 @@ def execute_proxmox_deployment(config, deployment_id):
                 bridge=bridge,
                 ip=gitlab_ip_config,
                 gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
-                password='root',
+                password=container_password,
                 start=True
             )
 
@@ -465,7 +473,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         bridge=bridge,
                         ip=runner_ip_config,
                         gateway=network_gateway if runner_ip_config != 'dhcp' else None,
-                        password='root',
+                        password=container_password,
                         start=True
                     )
 
