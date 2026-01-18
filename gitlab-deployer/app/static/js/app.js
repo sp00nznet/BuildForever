@@ -1012,6 +1012,7 @@ function updateCredentialsList(credentials) {
                 ${cred.has_ssh_key ? '<span class="auth-badge ssh">SSH Key</span>' : ''}
             </div>
             <div class="credential-actions">
+                <button type="button" class="btn btn-tiny btn-secondary" onclick="editCredential(${cred.id})">Edit</button>
                 ${!cred.is_default ? `<button type="button" class="btn btn-tiny btn-secondary" onclick="setDefaultCredential(${cred.id})">Set Default</button>` : ''}
                 ${cred.has_ssh_key ? `<button type="button" class="btn btn-tiny btn-secondary" onclick="downloadCredentialKey(${cred.id})">Download Key</button>` : ''}
                 <button type="button" class="btn btn-tiny btn-danger" onclick="deleteCredential(${cred.id})">Delete</button>
@@ -1153,8 +1154,13 @@ function saveCredential() {
 
 // Save credential data (for manual entry)
 function saveCredentialData(data) {
-    fetch('/api/credentials', {
-        method: 'POST',
+    const credentialId = document.getElementById('credentialId')?.value;
+    const isEditing = credentialId && credentialId !== '';
+    const url = isEditing ? `/api/credentials/${credentialId}` : '/api/credentials';
+    const method = isEditing ? 'PUT' : 'POST';
+
+    fetch(url, {
+        method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
     })
@@ -1163,7 +1169,7 @@ function saveCredentialData(data) {
         if (result.success) {
             toggleCredentialModal();
             loadCredentials();
-            showStatus('success', 'Credential saved successfully');
+            showStatus('success', isEditing ? 'Credential updated successfully' : 'Credential saved successfully');
         } else {
             alert(result.error || 'Failed to save credential');
         }
@@ -1171,6 +1177,42 @@ function saveCredentialData(data) {
     .catch(error => {
         alert('Failed to save credential: ' + error.message);
     });
+}
+
+// Edit credential
+function editCredential(credentialId) {
+    // Fetch the credential data
+    fetch(`/api/credentials/${credentialId}?include_secrets=true`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.credential) {
+                const cred = data.credential;
+
+                // Open modal
+                const modal = document.getElementById('credentialModal');
+                modal.style.display = 'flex';
+
+                // Set modal title
+                document.getElementById('credentialModalTitle').textContent = 'Edit Credential';
+
+                // Populate form fields
+                document.getElementById('credentialId').value = cred.id;
+                document.getElementById('credentialName').value = cred.name || '';
+                document.getElementById('credentialUsername').value = cred.username || '';
+                document.getElementById('credentialPassword').value = cred.password || '';
+                document.getElementById('credentialPublicKey').value = cred.ssh_public_key || '';
+                document.getElementById('credentialPrivateKey').value = cred.ssh_private_key || '';
+                document.getElementById('credentialDefault').checked = cred.is_default || false;
+
+                // Show manual tab for editing
+                showCredentialTab('manual');
+            } else {
+                showStatus('error', data.error || 'Failed to load credential for editing');
+            }
+        })
+        .catch(error => {
+            showStatus('error', 'Failed to load credential: ' + error.message);
+        });
 }
 
 // Delete credential

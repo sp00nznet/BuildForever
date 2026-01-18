@@ -374,6 +374,10 @@ def execute_proxmox_deployment(config, deployment_id):
             # Get IP config for GitLab
             gitlab_ip_config = get_ip_config('gitlab')
 
+            # Debug logging for static IP
+            print(f"[DEBUG] Network config: use_dhcp={use_dhcp}, ip_assignments={ip_assignments}")
+            print(f"[DEBUG] GitLab IP config: {gitlab_ip_config}, gateway: {network_gateway}")
+
             # Create GitLab container
             result = client.create_container(
                 node=selected_node,
@@ -532,16 +536,33 @@ def execute_proxmox_deployment(config, deployment_id):
                     # Check if user selected a specific ISO for this Windows version
                     windows_isos = provider_config.get('windows_isos', {})
                     user_selected_iso = windows_isos.get(runner, '')
+                    iso_storage = provider_config.get('iso_storage', 'local')
                     windows_iso = None
+                    windows_floppy = None
                     iso_source = 'none'
 
                     if user_selected_iso:
-                        # User selected an ISO from Proxmox storage - use it directly
+                        # User selected an ISO from Proxmox storage
+                        # Create a floppy image with autounattend.xml for unattended installation
                         windows_iso = user_selected_iso
                         iso_source = 'user-selected'
+
+                        # Create autounattend floppy for unattended install
+                        floppy_result = client.create_windows_floppy_answer(
+                            node=selected_node,
+                            storage=iso_storage,
+                            windows_type=runner,
+                            username=win_username,
+                            password=win_password,
+                            static_ip=runner_static_ip,
+                            gateway=network_gateway if runner_static_ip else None,
+                            dns=network_dns
+                        )
+                        if floppy_result.get('success'):
+                            windows_floppy = floppy_result.get('floppy')
+                            iso_source = 'user-selected+autounattend'
                     else:
                         # Try to create unattended Windows ISO with credentials baked in
-                        iso_storage = provider_config.get('iso_storage', 'local')
                         iso_result = client.create_unattended_windows_iso(
                             node=selected_node,
                             storage=iso_storage,
@@ -568,13 +589,16 @@ def execute_proxmox_deployment(config, deployment_id):
                         disk_size=runner_config.get('disk', 60),
                         bridge=bridge,
                         iso=windows_iso,
+                        floppy=windows_floppy,
                         is_windows=True
                     )
 
                     if result['success']:
                         # Determine status message based on ISO source
-                        if iso_source == 'user-selected':
-                            iso_status = 'user ISO attached'
+                        if iso_source == 'user-selected+autounattend':
+                            iso_status = 'user ISO + autounattend attached'
+                        elif iso_source == 'user-selected':
+                            iso_status = 'user ISO attached (manual install)'
                         elif iso_source == 'auto-created':
                             iso_status = 'unattended ISO attached'
                         else:
@@ -597,11 +621,13 @@ def execute_proxmox_deployment(config, deployment_id):
                             **cred_info
                         })
 
-                        # Start VM - Windows will install automatically (or user will install manually)
+                        # Start VM - Windows will install automatically with autounattend.xml
                         if windows_iso:
                             client.start_vm(selected_node, runner_vmid)
-                            if iso_source == 'user-selected':
-                                created[-1]['status'] = 'started (manual Windows install)'
+                            if iso_source == 'user-selected+autounattend':
+                                created[-1]['status'] = 'started (Windows auto-installing via autounattend)'
+                            elif iso_source == 'user-selected':
+                                created[-1]['status'] = 'started (manual Windows install required)'
                             else:
                                 created[-1]['status'] = 'started (Windows auto-installing)'
                     else:

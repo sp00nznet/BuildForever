@@ -759,6 +759,77 @@ echo "SUCCESS: $OUTPUT_ISO"
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def create_windows_floppy_answer(self, node, storage, windows_type, username, password,
+                                      static_ip=None, gateway=None, dns='8.8.8.8'):
+        """
+        Create a floppy image containing autounattend.xml for unattended Windows installation.
+        This can be attached alongside a user-provided Windows ISO.
+        Returns the floppy volid to attach as floppy0.
+        """
+        floppy_name = f'autounattend-{windows_type}.img'
+
+        # Generate autounattend.xml
+        autounattend_xml = self._get_windows_autounattend_xml(
+            windows_type=windows_type,
+            username=username,
+            password=password,
+            static_ip=static_ip,
+            gateway=gateway,
+            dns=dns
+        )
+
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.host, username='root', password=self.password, timeout=30)
+
+            # Determine storage path (snippets for floppy images, or ISO path)
+            storage_path = '/var/lib/vz/template/iso'
+
+            # Base64 encode the XML
+            autounattend_b64 = base64.b64encode(autounattend_xml.encode()).decode()
+
+            # Create floppy image script
+            create_floppy_script = f'''#!/bin/bash
+set -e
+
+FLOPPY_PATH="{storage_path}/{floppy_name}"
+
+# Create a 1.44MB floppy image
+dd if=/dev/zero of="$FLOPPY_PATH" bs=1024 count=1440 2>/dev/null
+
+# Format as FAT12
+mkfs.vfat "$FLOPPY_PATH" >/dev/null
+
+# Mount and add files
+MOUNT_DIR=$(mktemp -d)
+mount -o loop "$FLOPPY_PATH" "$MOUNT_DIR"
+
+# Write autounattend.xml
+echo "{autounattend_b64}" | base64 -d > "$MOUNT_DIR/autounattend.xml"
+
+# Unmount
+umount "$MOUNT_DIR"
+rmdir "$MOUNT_DIR"
+
+echo "SUCCESS: $FLOPPY_PATH"
+'''
+
+            stdin, stdout, stderr = ssh.exec_command(create_floppy_script, timeout=60)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode()
+            errors = stderr.read().decode()
+
+            ssh.close()
+
+            if exit_code == 0 and 'SUCCESS:' in output:
+                return {'success': True, 'floppy': f'{storage}:iso/{floppy_name}'}
+            else:
+                return {'success': False, 'error': errors or output or 'Floppy creation failed'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def _get_windows_autounattend_xml(self, windows_type, username, password,
                                        static_ip=None, gateway=None, dns='8.8.8.8'):
         """Generate autounattend.xml for unattended Windows installation."""
@@ -1120,7 +1191,7 @@ echo GitLab Runner installation complete!
     # =========================================================================
 
     def create_vm(self, node, vmid, name, memory, cores, storage, disk_size,
-                  bridge='vmbr0', ostype='l26', iso=None, bios='seabios',
+                  bridge='vmbr0', ostype='l26', iso=None, floppy=None, bios='seabios',
                   machine='pc', cpu='host', is_macos=False, is_windows=False):
         """Create a QEMU VM."""
         params = {
@@ -1134,13 +1205,20 @@ echo GitLab Runner installation complete!
             'scsihw': 'virtio-scsi-pci',
             'scsi0': f'{storage}:{disk_size}',
             'ostype': ostype,
-            'boot': 'order=scsi0;ide2',
             'agent': 'enabled=1',
         }
 
-        # ISO attachment
+        # ISO attachment - set boot order based on whether ISO is present
         if iso:
             params['ide2'] = f'{iso},media=cdrom'
+            # Boot from CD-ROM first for installation, then hard drive
+            params['boot'] = 'order=ide2;scsi0'
+        else:
+            params['boot'] = 'order=scsi0'
+
+        # Floppy image attachment (for autounattend.xml with Windows)
+        if floppy:
+            params['floppy0'] = floppy
 
         # macOS-specific configuration
         if is_macos:
