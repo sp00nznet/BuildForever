@@ -759,14 +759,14 @@ echo "SUCCESS: $OUTPUT_ISO"
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    def create_windows_floppy_answer(self, node, storage, windows_type, username, password,
-                                      static_ip=None, gateway=None, dns='8.8.8.8'):
+    def create_windows_answer_iso(self, node, storage, windows_type, username, password,
+                                    static_ip=None, gateway=None, dns='8.8.8.8'):
         """
-        Create a floppy image containing autounattend.xml for unattended Windows installation.
+        Create a small ISO containing autounattend.xml for unattended Windows installation.
         This can be attached alongside a user-provided Windows ISO.
-        Returns the floppy volid to attach as floppy0.
+        Returns the ISO volid to attach as sata0.
         """
-        floppy_name = f'autounattend-{windows_type}.img'
+        iso_name = f'autounattend-{windows_type}.iso'
 
         # Generate autounattend.xml
         autounattend_xml = self._get_windows_autounattend_xml(
@@ -783,39 +783,39 @@ echo "SUCCESS: $OUTPUT_ISO"
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             ssh.connect(self.host, username='root', password=self.password, timeout=30)
 
-            # Determine storage path (snippets for floppy images, or ISO path)
+            # Determine storage path for ISOs
             storage_path = '/var/lib/vz/template/iso'
 
             # Base64 encode the XML
             autounattend_b64 = base64.b64encode(autounattend_xml.encode()).decode()
 
-            # Create floppy image script
-            create_floppy_script = f'''#!/bin/bash
+            # Create ISO script using genisoimage/mkisofs
+            create_iso_script = f'''#!/bin/bash
 set -e
 
-FLOPPY_PATH="{storage_path}/{floppy_name}"
+ISO_PATH="{storage_path}/{iso_name}"
+WORK_DIR=$(mktemp -d)
 
-# Create a 1.44MB floppy image
-dd if=/dev/zero of="$FLOPPY_PATH" bs=1024 count=1440 2>/dev/null
+# Write autounattend.xml to temp directory
+echo "{autounattend_b64}" | base64 -d > "$WORK_DIR/autounattend.xml"
 
-# Format as FAT12
-mkfs.vfat "$FLOPPY_PATH" >/dev/null
+# Create ISO using genisoimage (or mkisofs)
+if command -v genisoimage &> /dev/null; then
+    genisoimage -o "$ISO_PATH" -V "AUTOUNATTEND" -J -r "$WORK_DIR" 2>/dev/null
+elif command -v mkisofs &> /dev/null; then
+    mkisofs -o "$ISO_PATH" -V "AUTOUNATTEND" -J -r "$WORK_DIR" 2>/dev/null
+else
+    echo "ERROR: Neither genisoimage nor mkisofs found"
+    exit 1
+fi
 
-# Mount and add files
-MOUNT_DIR=$(mktemp -d)
-mount -o loop "$FLOPPY_PATH" "$MOUNT_DIR"
+# Cleanup
+rm -rf "$WORK_DIR"
 
-# Write autounattend.xml
-echo "{autounattend_b64}" | base64 -d > "$MOUNT_DIR/autounattend.xml"
-
-# Unmount
-umount "$MOUNT_DIR"
-rmdir "$MOUNT_DIR"
-
-echo "SUCCESS: $FLOPPY_PATH"
+echo "SUCCESS: $ISO_PATH"
 '''
 
-            stdin, stdout, stderr = ssh.exec_command(create_floppy_script, timeout=60)
+            stdin, stdout, stderr = ssh.exec_command(create_iso_script, timeout=60)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
@@ -823,9 +823,9 @@ echo "SUCCESS: $FLOPPY_PATH"
             ssh.close()
 
             if exit_code == 0 and 'SUCCESS:' in output:
-                return {'success': True, 'floppy': f'{storage}:iso/{floppy_name}'}
+                return {'success': True, 'answer_iso': f'{storage}:iso/{iso_name}'}
             else:
-                return {'success': False, 'error': errors or output or 'Floppy creation failed'}
+                return {'success': False, 'error': errors or output or 'ISO creation failed'}
 
         except Exception as e:
             return {'success': False, 'error': str(e)}
@@ -1249,7 +1249,7 @@ echo GitLab Runner installation complete!
     # =========================================================================
 
     def create_vm(self, node, vmid, name, memory, cores, storage, disk_size,
-                  bridge='vmbr0', ostype='l26', iso=None, floppy=None, virtio_iso=None,
+                  bridge='vmbr0', ostype='l26', iso=None, answer_iso=None, virtio_iso=None,
                   bios='seabios', machine='pc', cpu='host', is_macos=False, is_windows=False):
         """Create a QEMU VM."""
         params = {
@@ -1278,9 +1278,9 @@ echo GitLab Runner installation complete!
         if virtio_iso:
             params['ide3'] = f'{virtio_iso},media=cdrom'
 
-        # Floppy image attachment (for autounattend.xml with Windows)
-        if floppy:
-            params['floppy0'] = floppy
+        # Answer file ISO attachment (for autounattend.xml with Windows)
+        if answer_iso:
+            params['sata0'] = f'{answer_iso},media=cdrom'
 
         # macOS-specific configuration
         if is_macos:

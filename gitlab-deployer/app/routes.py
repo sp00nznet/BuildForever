@@ -540,17 +540,17 @@ def execute_proxmox_deployment(config, deployment_id):
                     # Get VirtIO drivers ISO (applies to all Windows VMs)
                     virtio_iso = provider_config.get('virtio_iso', '')
                     windows_iso = None
-                    windows_floppy = None
+                    windows_answer_iso = None
                     iso_source = 'none'
 
                     if user_selected_iso:
                         # User selected an ISO from Proxmox storage
-                        # Create a floppy image with autounattend.xml for unattended installation
+                        # Create an ISO with autounattend.xml for unattended installation
                         windows_iso = user_selected_iso
                         iso_source = 'user-selected'
 
-                        # Create autounattend floppy for unattended install
-                        floppy_result = client.create_windows_floppy_answer(
+                        # Create autounattend ISO for unattended install
+                        answer_result = client.create_windows_answer_iso(
                             node=selected_node,
                             storage=iso_storage,
                             windows_type=runner,
@@ -560,8 +560,8 @@ def execute_proxmox_deployment(config, deployment_id):
                             gateway=network_gateway if runner_static_ip else None,
                             dns=network_dns
                         )
-                        if floppy_result.get('success'):
-                            windows_floppy = floppy_result.get('floppy')
+                        if answer_result.get('success'):
+                            windows_answer_iso = answer_result.get('answer_iso')
                             iso_source = 'user-selected+autounattend'
                     else:
                         # Try to create unattended Windows ISO with credentials baked in
@@ -591,7 +591,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         disk_size=runner_config.get('disk', 60),
                         bridge=bridge,
                         iso=windows_iso,
-                        floppy=windows_floppy,
+                        answer_iso=windows_answer_iso,
                         virtio_iso=virtio_iso if virtio_iso else None,
                         is_windows=True
                     )
