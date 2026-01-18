@@ -120,6 +120,29 @@ header h1 {
     cursor: pointer;
 }
 
+/* Form row for side-by-side fields */
+.form-row {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group {
+    margin-bottom: 0;
+}
+
+.form-group.half {
+    flex: 1;
+}
+
+/* Provider options styling */
+.provider-options h4 {
+    color: var(--secondary-color);
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
 .button-group {
     display: flex;
     gap: 15px;
