@@ -21,36 +21,28 @@ class ProxmoxClient:
         'arch': 'https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso',
     }
 
-    # Windows ISO download via UUP dump API
-    # These product IDs correspond to the latest releases via Microsoft's unified update platform
+    # Windows ISO download via Microsoft Software Download API (Fido-style)
+    # Product Edition IDs from Microsoft's download portal
     WINDOWS_PRODUCTS = {
         'windows-10': {
-            'sku': '48',  # Windows 10 Pro
-            'ring': 'retail',
-            'arch': 'amd64',
-            'lang': 'en-us',
-            'edition': 'professional',
+            'product_edition_id': '2618',   # Windows 10 22H2
+            'name': 'Windows 10',
+            'arch': 'x64',
         },
         'windows-11': {
-            'sku': '48',  # Windows 11 Pro
-            'ring': 'retail',
-            'arch': 'amd64',
-            'lang': 'en-us',
-            'edition': 'professional',
+            'product_edition_id': '2935',   # Windows 11 24H2
+            'name': 'Windows 11',
+            'arch': 'x64',
         },
         'windows-server-2022': {
-            'sku': '8',  # Windows Server Standard
-            'ring': 'retail',
-            'arch': 'amd64',
-            'lang': 'en-us',
-            'edition': 'serverstandard',
+            'product_edition_id': '2631',   # Windows Server 2022
+            'name': 'Windows Server 2022',
+            'arch': 'x64',
         },
         'windows-server-2025': {
-            'sku': '8',  # Windows Server Standard
-            'ring': 'retail',
-            'arch': 'amd64',
-            'lang': 'en-us',
-            'edition': 'serverstandard',
+            'product_edition_id': '3113',   # Windows Server 2025
+            'name': 'Windows Server 2025',
+            'arch': 'x64',
         },
     }
 
@@ -200,14 +192,18 @@ class ProxmoxClient:
         return self.wait_for_task(node, task)
 
     # =========================================================================
-    # Windows ISO Auto-Download
+    # Windows ISO Auto-Download (Microsoft Software Download API - Fido-style)
     # =========================================================================
 
     def get_windows_iso(self, node, storage, windows_type, callback=None):
         """
-        Automatically download Windows ISO using UUP dump.
+        Automatically download Windows ISO using Microsoft's Software Download API.
+        Uses the same approach as Fido/Rufus to get official download links.
         Returns the ISO path in Proxmox storage format.
         """
+        import uuid
+        import re
+
         if windows_type not in self.WINDOWS_PRODUCTS:
             return {'success': False, 'error': f'Unknown Windows type: {windows_type}'}
 
@@ -221,100 +217,207 @@ class ProxmoxClient:
                 return {'success': True, 'iso': iso['volid'], 'cached': True}
 
         if callback:
-            callback({'status': 'fetching', 'message': f'Fetching latest {windows_type} build info...'})
+            callback({'status': 'fetching', 'message': f'Fetching {product["name"]} download info from Microsoft...'})
 
         try:
-            # Use UUP dump API to get latest Windows build
-            uup_api = 'https://api.uupdump.net'
+            # Microsoft Software Download API endpoints
+            session_id = str(uuid.uuid4())
+            locale = 'en-US'
+            profile = '606624d44113'
 
-            # Get latest build for the product
-            if 'server' in windows_type:
-                search_query = 'Windows Server' + (' 2025' if '2025' in windows_type else ' 2022')
-            else:
-                search_query = 'Windows ' + ('11' if '11' in windows_type else '10')
+            # Common headers - simulate Edge browser on Windows
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+                'Accept': 'application/json',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': f'https://www.microsoft.com/{locale.lower()}/software-download/windows10ISO',
+            }
 
-            # Fetch available builds
-            builds_response = requests.get(
-                f'{uup_api}/listid.php',
-                params={'search': search_query, 'sortByDate': '1'},
-                timeout=30
-            )
-
-            if builds_response.status_code != 200:
-                return {'success': False, 'error': 'Failed to fetch UUP builds'}
-
-            builds_data = builds_response.json()
-            if not builds_data.get('response', {}).get('builds'):
-                return {'success': False, 'error': 'No builds found for this Windows version'}
-
-            # Get the latest build
-            latest_build = list(builds_data['response']['builds'].values())[0]
-            build_id = latest_build['uuid']
+            # Step 1: Whitelist the session for downloads
+            whitelist_url = f'https://vlscppe.microsoft.com/tags?org_id=y6jn8c31&session_id={session_id}'
+            requests.get(whitelist_url, headers=headers, timeout=30)
 
             if callback:
-                callback({'status': 'generating', 'message': f'Generating ISO for build {latest_build.get("build", "unknown")}...'})
+                callback({'status': 'fetching', 'message': f'Getting available languages for {product["name"]}...'})
 
-            # Get download links
-            download_response = requests.get(
-                f'{uup_api}/get.php',
-                params={
-                    'id': build_id,
-                    'lang': product['lang'],
-                    'edition': product['edition'],
-                },
-                timeout=30
-            )
+            # Step 2: Get SKU information (available languages)
+            sku_url = 'https://www.microsoft.com/software-download-connector/api/getskuinformationbyproductedition'
+            sku_params = {
+                'profile': profile,
+                'productEditionId': product['product_edition_id'],
+                'SKU': 'undefined',
+                'friendlyFileName': 'undefined',
+                'Locale': locale,
+                'sessionID': session_id,
+            }
+
+            sku_response = requests.get(sku_url, params=sku_params, headers=headers, timeout=30)
+
+            if sku_response.status_code != 200:
+                return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                       f'SKU request failed: {sku_response.status_code}')
+
+            sku_data = sku_response.json()
+
+            # Find English (US) SKU ID
+            sku_id = None
+            skus = sku_data.get('Skus', [])
+            for sku in skus:
+                lang = sku.get('Language', '').lower()
+                if 'english' in lang and ('united states' in lang or lang == 'english'):
+                    sku_id = sku.get('Id')
+                    break
+            # Fallback to first English option
+            if not sku_id:
+                for sku in skus:
+                    if 'english' in sku.get('Language', '').lower():
+                        sku_id = sku.get('Id')
+                        break
+            # Fallback to first available
+            if not sku_id and skus:
+                sku_id = skus[0].get('Id')
+
+            if not sku_id:
+                return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                       'No SKU found')
+
+            if callback:
+                callback({'status': 'fetching', 'message': f'Getting download links for {product["name"]}...'})
+
+            # Step 3: Get download links
+            download_url = 'https://www.microsoft.com/software-download-connector/api/GetProductDownloadLinksBySku'
+            download_params = {
+                'profile': profile,
+                'productEditionId': 'undefined',
+                'SKU': sku_id,
+                'friendlyFileName': 'undefined',
+                'Locale': locale,
+                'sessionID': session_id,
+            }
+
+            download_response = requests.get(download_url, params=download_params, headers=headers, timeout=30)
 
             if download_response.status_code != 200:
-                return {'success': False, 'error': 'Failed to get download info'}
+                return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                       f'Download request failed: {download_response.status_code}')
 
             download_data = download_response.json()
 
-            # UUP dump provides aria2 script for downloading - we'll use their download service
-            # Generate a download package that can be processed
-            package_response = requests.get(
-                f'{uup_api}/get.php',
-                params={
-                    'id': build_id,
-                    'pack': product['lang'],
-                    'edition': product['edition'],
-                    'autodl': '2',  # Generate download package
-                },
-                timeout=60
-            )
+            # Find x64 ISO download link
+            iso_url = None
+            product_links = download_data.get('ProductDownloadLinks', [])
+            for link in product_links:
+                uri = link.get('Uri', '')
+                # Prefer x64 architecture
+                if 'x64' in uri.lower() or 'amd64' in uri.lower():
+                    iso_url = uri
+                    break
+            # Fallback to any ISO link
+            if not iso_url and product_links:
+                iso_url = product_links[0].get('Uri')
 
-            if package_response.status_code == 200:
-                pkg_data = package_response.json()
-                if pkg_data.get('response', {}).get('files'):
-                    # Get direct download URL if available
-                    files = pkg_data['response']['files']
-                    for filename, file_info in files.items():
-                        if filename.endswith('.esd') or filename.endswith('.iso'):
-                            download_url = file_info.get('url')
-                            if download_url:
-                                if callback:
-                                    callback({'status': 'downloading', 'message': f'Downloading {filename}...'})
-                                return self.download_iso_to_proxmox(node, storage, download_url, iso_filename, callback)
+            if not iso_url:
+                return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                       'No download link found')
 
-            # Fallback: Use a known working Windows ISO evaluation URL
-            eval_urls = {
-                'windows-10': 'https://software.download.prss.microsoft.com/dbazure/Win10_22H2_English_x64v1.iso',
-                'windows-11': 'https://software.download.prss.microsoft.com/dbazure/Win11_23H2_English_x64v2.iso',
-                'windows-server-2022': 'https://software.download.prss.microsoft.com/dbazure/Windows_Server_2022_SERVERSTANDARD_x64FRE_en-us.iso',
-                'windows-server-2025': 'https://software.download.prss.microsoft.com/dbazure/26100.1742.240906-0331.ge_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso',
-            }
+            if callback:
+                callback({'status': 'downloading', 'message': f'Downloading {product["name"]} ISO...'})
 
-            if windows_type in eval_urls:
-                if callback:
-                    callback({'status': 'downloading', 'message': f'Downloading {windows_type} evaluation ISO...'})
-                return self.download_iso_to_proxmox(node, storage, eval_urls[windows_type], iso_filename, callback)
-
-            return {'success': False, 'error': 'Could not find download URL for Windows ISO'}
+            return self.download_iso_to_proxmox(node, storage, iso_url, iso_filename, callback)
 
         except requests.RequestException as e:
-            return {'success': False, 'error': f'Network error: {str(e)}'}
+            return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                   f'Network error: {str(e)}')
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            return self._fallback_windows_download(node, storage, windows_type, iso_filename, callback,
+                                                   str(e))
+
+    def _fallback_windows_download(self, node, storage, windows_type, iso_filename, callback, error_reason):
+        """
+        Fallback method for Windows ISO download when Microsoft API fails.
+        Uses Windows Server evaluation center for server editions.
+        For consumer Windows, returns an error with manual download instructions.
+        """
+        if callback:
+            callback({'status': 'fallback', 'message': f'Primary download failed ({error_reason}), trying fallback...'})
+
+        # Windows Server editions have evaluation ISOs available via direct links
+        # These are fetched from Microsoft's evaluation center
+        if 'server' in windows_type:
+            try:
+                # Try to get evaluation center download link
+                eval_url = self._get_server_evaluation_link(windows_type, callback)
+                if eval_url:
+                    if callback:
+                        callback({'status': 'downloading', 'message': f'Downloading {windows_type} evaluation ISO...'})
+                    return self.download_iso_to_proxmox(node, storage, eval_url, iso_filename, callback)
+            except Exception:
+                pass
+
+        # For consumer Windows (10/11), provide manual download instructions
+        download_pages = {
+            'windows-10': 'https://www.microsoft.com/software-download/windows10ISO',
+            'windows-11': 'https://www.microsoft.com/software-download/windows11',
+            'windows-server-2022': 'https://www.microsoft.com/evalcenter/evaluate-windows-server-2022',
+            'windows-server-2025': 'https://www.microsoft.com/evalcenter/evaluate-windows-server-2025',
+        }
+
+        page_url = download_pages.get(windows_type, 'https://www.microsoft.com/software-download/')
+
+        return {
+            'success': False,
+            'error': f'Auto-download failed: {error_reason}. Please manually download the ISO from {page_url} and upload it to Proxmox storage as "{iso_filename}"',
+            'manual_download_url': page_url,
+            'expected_filename': iso_filename,
+        }
+
+    def _get_server_evaluation_link(self, windows_type, callback=None):
+        """
+        Try to get Windows Server evaluation download link from Microsoft's evaluation center.
+        Returns the direct download URL if found, None otherwise.
+        """
+        import re
+
+        eval_pages = {
+            'windows-server-2022': 'https://www.microsoft.com/en-us/evalcenter/download-windows-server-2022',
+            'windows-server-2025': 'https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025',
+        }
+
+        if windows_type not in eval_pages:
+            return None
+
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+            }
+
+            response = requests.get(eval_pages[windows_type], headers=headers, timeout=30)
+            if response.status_code != 200:
+                return None
+
+            # Look for ISO download links in the page
+            # Microsoft evaluation center uses various patterns for download links
+            iso_patterns = [
+                r'https://go\.microsoft\.com/fwlink/\?linkid=\d+',
+                r'https://software-static\.download\.prss\.microsoft\.com/[^"\']+\.iso',
+                r'https://download\.microsoft\.com/[^"\']+\.iso',
+            ]
+
+            for pattern in iso_patterns:
+                matches = re.findall(pattern, response.text, re.IGNORECASE)
+                if matches:
+                    # Filter for x64/amd64 versions
+                    for match in matches:
+                        if 'x64' in match.lower() or 'amd64' in match.lower() or 'SERVER' in match.upper():
+                            return match
+                    # Return first match if no architecture-specific found
+                    return matches[0]
+
+            return None
+
+        except Exception:
+            return None
 
     # =========================================================================
     # macOS Recovery Image (No ISO needed - uses Apple's recovery servers)
