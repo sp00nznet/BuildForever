@@ -1,3 +1,19 @@
+// Runner resource requirements (CPU cores, Memory GB, Storage GB)
+const RUNNER_RESOURCES = {
+    'windows-10': { cpu: 4, memory: 8, storage: 60 },
+    'windows-11': { cpu: 4, memory: 8, storage: 60 },
+    'windows-server-2022': { cpu: 4, memory: 16, storage: 80 },
+    'windows-server-2025': { cpu: 4, memory: 16, storage: 80 },
+    'debian': { cpu: 2, memory: 4, storage: 40 },
+    'ubuntu': { cpu: 2, memory: 4, storage: 40 },
+    'arch': { cpu: 2, memory: 4, storage: 40 },
+    'rocky': { cpu: 2, memory: 4, storage: 40 },
+    'macos': { cpu: 4, memory: 8, storage: 80 }
+};
+
+// Store node capacity after successful connection test
+let nodeCapacity = null;
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     const deploymentForm = document.getElementById('deploymentForm');
@@ -5,9 +21,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load saved configurations on page load
     loadSavedConfigs();
 
-    // Update runner count on checkbox change
+    // Update runner count and resources on checkbox change
     document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
-        checkbox.addEventListener('change', updateSelectedCount);
+        checkbox.addEventListener('change', function() {
+            updateSelectedCount();
+            updateResourceTotals();
+        });
     });
 
     // Traefik toggle handler
@@ -15,6 +34,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (traefikCheckbox) {
         traefikCheckbox.addEventListener('change', toggleTraefikOptions);
     }
+
+    // Initialize resource display
+    updateResourceTotals();
 
     // Form submission handler
     deploymentForm.addEventListener('submit', function(e) {
@@ -101,6 +123,106 @@ function updateSelectedCount() {
     if (countDisplay) {
         countDisplay.textContent = `${count} selected`;
     }
+}
+
+// Calculate and update resource totals
+function updateResourceTotals() {
+    let totalCpu = 0;
+    let totalMemory = 0;
+    let totalStorage = 0;
+
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const resources = RUNNER_RESOURCES[runner];
+        if (resources) {
+            totalCpu += resources.cpu;
+            totalMemory += resources.memory;
+            totalStorage += resources.storage;
+        }
+    });
+
+    // Update display
+    document.getElementById('totalCpu').textContent = totalCpu;
+    document.getElementById('totalMemory').textContent = `${totalMemory} GB`;
+    document.getElementById('totalStorage').textContent = `${totalStorage} GB`;
+
+    // Update comparison status if node capacity is available
+    if (nodeCapacity) {
+        updateResourceComparison(totalCpu, totalMemory, totalStorage);
+    }
+}
+
+// Update resource comparison indicators
+function updateResourceComparison(requiredCpu, requiredMemory, requiredStorage) {
+    if (!nodeCapacity) return;
+
+    // CPU status
+    const cpuStatus = document.getElementById('cpuStatus');
+    if (cpuStatus) {
+        if (requiredCpu <= nodeCapacity.cpu * 0.7) {
+            cpuStatus.textContent = 'OK';
+            cpuStatus.className = 'resource-status ok';
+        } else if (requiredCpu <= nodeCapacity.cpu) {
+            cpuStatus.textContent = 'TIGHT';
+            cpuStatus.className = 'resource-status warning';
+        } else {
+            cpuStatus.textContent = 'OVER';
+            cpuStatus.className = 'resource-status error';
+        }
+    }
+
+    // Memory status
+    const memoryStatus = document.getElementById('memoryStatus');
+    if (memoryStatus) {
+        if (requiredMemory <= nodeCapacity.memory * 0.7) {
+            memoryStatus.textContent = 'OK';
+            memoryStatus.className = 'resource-status ok';
+        } else if (requiredMemory <= nodeCapacity.memory) {
+            memoryStatus.textContent = 'TIGHT';
+            memoryStatus.className = 'resource-status warning';
+        } else {
+            memoryStatus.textContent = 'OVER';
+            memoryStatus.className = 'resource-status error';
+        }
+    }
+
+    // Storage status
+    const storageStatus = document.getElementById('storageStatus');
+    if (storageStatus) {
+        if (requiredStorage <= nodeCapacity.storage * 0.7) {
+            storageStatus.textContent = 'OK';
+            storageStatus.className = 'resource-status ok';
+        } else if (requiredStorage <= nodeCapacity.storage) {
+            storageStatus.textContent = 'TIGHT';
+            storageStatus.className = 'resource-status warning';
+        } else {
+            storageStatus.textContent = 'OVER';
+            storageStatus.className = 'resource-status error';
+        }
+    }
+}
+
+// Set node capacity and show comparison panel
+function setNodeCapacity(capacity, nodeName) {
+    nodeCapacity = capacity;
+
+    // Update display
+    document.getElementById('nodeCpu').textContent = capacity.cpu;
+    document.getElementById('nodeMemory').textContent = `${capacity.memory} GB`;
+    document.getElementById('nodeStorage').textContent = `${capacity.storage} GB`;
+    document.getElementById('nodeNameDisplay').textContent = nodeName ? `(${nodeName})` : '';
+
+    // Show the panel
+    document.getElementById('nodeCapacityPanel').style.display = 'block';
+
+    // Update comparison
+    updateResourceTotals();
+}
+
+// Hide node capacity panel
+function hideNodeCapacity() {
+    nodeCapacity = null;
+    document.getElementById('nodeCapacityPanel').style.display = 'none';
 }
 
 // Toggle Traefik options visibility
@@ -280,6 +402,7 @@ function selectAllRunners() {
         checkbox.checked = true;
     });
     updateSelectedCount();
+    updateResourceTotals();
 }
 
 // Deselect all runners
@@ -288,6 +411,7 @@ function deselectAllRunners() {
         checkbox.checked = false;
     });
     updateSelectedCount();
+    updateResourceTotals();
 }
 
 // ============================================================================
@@ -543,22 +667,6 @@ function getProviderConfig(provider) {
                 storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
                 bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0'
             };
-        case 'vmware':
-            return {
-                host: document.getElementById('vmwareHost')?.value || '',
-                user: document.getElementById('vmwareUser')?.value || '',
-                password: document.getElementById('vmwarePassword')?.value || '',
-                datacenter: document.getElementById('vmwareDatacenter')?.value || '',
-                datastore: document.getElementById('vmwareDatastore')?.value || '',
-                verify_ssl: document.getElementById('vmwareVerifySSL')?.checked || false
-            };
-        case 'hyperv':
-            return {
-                host: document.getElementById('hypervHost')?.value || '',
-                user: document.getElementById('hypervUser')?.value || '',
-                password: document.getElementById('hypervPassword')?.value || '',
-                vswitch: document.getElementById('hypervVSwitch')?.value || ''
-            };
         case 'docker':
         default:
             return {};
@@ -579,20 +687,6 @@ function setProviderConfig(provider, config) {
             if (document.getElementById('proxmoxVerifySSL')) document.getElementById('proxmoxVerifySSL').checked = config.verify_ssl || false;
             if (document.getElementById('proxmoxStorage')) document.getElementById('proxmoxStorage').value = config.storage || '';
             if (document.getElementById('proxmoxBridge')) document.getElementById('proxmoxBridge').value = config.bridge || '';
-            break;
-        case 'vmware':
-            if (document.getElementById('vmwareHost')) document.getElementById('vmwareHost').value = config.host || '';
-            if (document.getElementById('vmwareUser')) document.getElementById('vmwareUser').value = config.user || '';
-            if (document.getElementById('vmwarePassword')) document.getElementById('vmwarePassword').value = config.password || '';
-            if (document.getElementById('vmwareDatacenter')) document.getElementById('vmwareDatacenter').value = config.datacenter || '';
-            if (document.getElementById('vmwareDatastore')) document.getElementById('vmwareDatastore').value = config.datastore || '';
-            if (document.getElementById('vmwareVerifySSL')) document.getElementById('vmwareVerifySSL').checked = config.verify_ssl || false;
-            break;
-        case 'hyperv':
-            if (document.getElementById('hypervHost')) document.getElementById('hypervHost').value = config.host || '';
-            if (document.getElementById('hypervUser')) document.getElementById('hypervUser').value = config.user || '';
-            if (document.getElementById('hypervPassword')) document.getElementById('hypervPassword').value = config.password || '';
-            if (document.getElementById('hypervVSwitch')) document.getElementById('hypervVSwitch').value = config.vswitch || '';
             break;
     }
 }
@@ -617,69 +711,19 @@ function testProxmoxConnection() {
     .then(data => {
         if (data.success) {
             showStatus('success', `Connected to Proxmox! Node: ${data.node_info || config.node}`);
+
+            // Set node capacity if available
+            if (data.capacity) {
+                setNodeCapacity(data.capacity, data.node_info || config.node);
+            }
         } else {
             showStatus('error', `Connection failed: ${data.error}`);
+            hideNodeCapacity();
         }
     })
     .catch(error => {
         showStatus('error', 'Connection test failed: ' + error.message);
+        hideNodeCapacity();
     });
 }
 
-// Test VMware connection
-function testVMwareConnection() {
-    const config = getProviderConfig('vmware');
-
-    if (!config.host || !config.user || !config.password) {
-        showStatus('error', 'Please fill in host, username, and password');
-        return;
-    }
-
-    showStatus('info', 'Testing VMware connection...');
-
-    fetch('/api/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'vmware', config: config })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showStatus('success', 'Connected to VMware vSphere!');
-        } else {
-            showStatus('error', `Connection failed: ${data.error}`);
-        }
-    })
-    .catch(error => {
-        showStatus('error', 'Connection test failed: ' + error.message);
-    });
-}
-
-// Test Hyper-V connection
-function testHypervConnection() {
-    const config = getProviderConfig('hyperv');
-
-    if (!config.host || !config.user || !config.password) {
-        showStatus('error', 'Please fill in host, username, and password');
-        return;
-    }
-
-    showStatus('info', 'Testing Hyper-V connection...');
-
-    fetch('/api/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'hyperv', config: config })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showStatus('success', 'Connected to Hyper-V!');
-        } else {
-            showStatus('error', `Connection failed: ${data.error}`);
-        }
-    })
-    .catch(error => {
-        showStatus('error', 'Connection test failed: ' + error.message);
-    });
-}

@@ -82,10 +82,6 @@ def deploy():
         # Validate provider connection settings
         if provider == 'proxmox':
             required_provider_fields = ['host', 'user', 'password']
-        elif provider == 'vmware':
-            required_provider_fields = ['host', 'user', 'password']
-        elif provider == 'hyperv':
-            required_provider_fields = ['host', 'user', 'password']
         else:
             return jsonify({
                 'success': False,
@@ -584,10 +580,6 @@ def test_connection():
     try:
         if provider == 'proxmox':
             return test_proxmox_connection(config)
-        elif provider == 'vmware':
-            return test_vmware_connection(config)
-        elif provider == 'hyperv':
-            return test_hyperv_connection(config)
         else:
             return jsonify({
                 'success': False,
@@ -601,7 +593,7 @@ def test_connection():
 
 
 def test_proxmox_connection(config):
-    """Test connection to Proxmox VE server"""
+    """Test connection to Proxmox VE server and return node capacity"""
     try:
         from proxmoxer import ProxmoxAPI
 
@@ -610,6 +602,8 @@ def test_proxmox_connection(config):
         user = config.get('user')
         password = config.get('password')
         verify_ssl = config.get('verify_ssl', False)
+        target_node = config.get('node', '')
+        target_storage = config.get('storage', 'local-lvm')
 
         if not all([host, user, password]):
             return jsonify({
@@ -632,12 +626,58 @@ def test_proxmox_connection(config):
 
         node_names = [node['node'] for node in nodes] if nodes else []
 
+        # Use target node or first available
+        selected_node = target_node if target_node in node_names else (node_names[0] if node_names else None)
+
+        # Get node capacity info
+        capacity = None
+        if selected_node:
+            try:
+                # Get node status for CPU and memory
+                node_status = proxmox.nodes(selected_node).status.get()
+
+                # CPU cores
+                cpu_cores = node_status.get('cpuinfo', {}).get('cpus', 0)
+
+                # Memory in GB (convert from bytes)
+                memory_bytes = node_status.get('memory', {}).get('total', 0)
+                memory_gb = round(memory_bytes / (1024 ** 3))
+
+                # Get storage capacity
+                storage_gb = 0
+                try:
+                    storages = proxmox.nodes(selected_node).storage.get()
+                    for storage in storages:
+                        if storage.get('storage') == target_storage:
+                            # Storage is in bytes
+                            storage_bytes = storage.get('total', 0)
+                            storage_gb = round(storage_bytes / (1024 ** 3))
+                            break
+                    # If target storage not found, sum all available storage
+                    if storage_gb == 0:
+                        for storage in storages:
+                            if storage.get('active', 0) == 1:
+                                storage_bytes = storage.get('total', 0)
+                                storage_gb += round(storage_bytes / (1024 ** 3))
+                except Exception:
+                    pass
+
+                capacity = {
+                    'cpu': cpu_cores,
+                    'memory': memory_gb,
+                    'storage': storage_gb
+                }
+            except Exception as e:
+                # Continue without capacity info if we can't get it
+                pass
+
         return jsonify({
             'success': True,
             'message': 'Connected successfully',
             'version': version.get('version', 'unknown'),
             'nodes': node_names,
-            'node_info': node_names[0] if node_names else None
+            'node_info': selected_node,
+            'capacity': capacity
         })
 
     except ImportError:
@@ -649,91 +689,6 @@ def test_proxmox_connection(config):
         return jsonify({
             'success': False,
             'error': f'Connection failed: {str(e)}'
-        }), 400
-
-
-def test_vmware_connection(config):
-    """Test connection to VMware vSphere/ESXi"""
-    try:
-        from pyVim.connect import SmartConnect, Disconnect
-        import ssl
-
-        host = config.get('host')
-        user = config.get('user')
-        password = config.get('password')
-        verify_ssl = config.get('verify_ssl', False)
-
-        if not all([host, user, password]):
-            return jsonify({
-                'success': False,
-                'error': 'Missing required connection parameters'
-            }), 400
-
-        # SSL context for connection
-        context = None
-        if not verify_ssl:
-            context = ssl._create_unverified_context()
-
-        # Connect to vSphere
-        si = SmartConnect(
-            host=host,
-            user=user,
-            pwd=password,
-            sslContext=context
-        )
-
-        # Get version info
-        about = si.content.about
-
-        # Disconnect
-        Disconnect(si)
-
-        return jsonify({
-            'success': True,
-            'message': 'Connected successfully',
-            'version': about.version,
-            'product': about.fullName
-        })
-
-    except ImportError:
-        return jsonify({
-            'success': False,
-            'error': 'pyvmomi library not installed. Run: pip install pyvmomi'
-        }), 500
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Connection failed: {str(e)}'
-        }), 400
-
-
-def test_hyperv_connection(config):
-    """Test connection to Hyper-V server"""
-    try:
-        import subprocess
-
-        host = config.get('host')
-        user = config.get('user')
-        password = config.get('password')
-
-        if not all([host, user, password]):
-            return jsonify({
-                'success': False,
-                'error': 'Missing required connection parameters'
-            }), 400
-
-        # Test WinRM connection using PowerShell (Windows only)
-        # This is a basic connectivity test
-        return jsonify({
-            'success': True,
-            'message': 'Hyper-V connection test requires Windows host. Configuration saved.',
-            'note': 'Full connection test will be performed during deployment'
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Connection test failed: {str(e)}'
         }), 400
 
 
@@ -750,14 +705,6 @@ def get_providers():
             'proxmox': {
                 'name': 'Proxmox VE',
                 'description': 'Deploy VMs to Proxmox Virtual Environment'
-            },
-            'vmware': {
-                'name': 'VMware vSphere/ESXi',
-                'description': 'Deploy VMs to VMware infrastructure'
-            },
-            'hyperv': {
-                'name': 'Hyper-V',
-                'description': 'Deploy VMs to Microsoft Hyper-V'
             }
         }
     })
