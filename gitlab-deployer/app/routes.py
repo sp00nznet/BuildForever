@@ -305,24 +305,177 @@ def execute_proxmox_deployment(config, deployment_id):
                 'error': 'No Proxmox node available'
             }), 400
 
-        # For now, return success with deployment plan
-        # Full VM creation would go here
+        storage = provider_config.get('storage', 'local-lvm')
+        bridge = provider_config.get('bridge', 'vmbr0')
         runners = config.get('runners', [])
+
+        # Track created resources
+        created_vms = []
+        created_containers = []
+        errors = []
+
+        # Get next available VMID
+        def get_next_vmid():
+            cluster_resources = proxmox.cluster.resources.get(type='vm')
+            used_ids = [r['vmid'] for r in cluster_resources]
+            vmid = 100
+            while vmid in used_ids:
+                vmid += 1
+            return vmid
+
+        # Create GitLab Server VM (QEMU)
+        try:
+            gitlab_vmid = get_next_vmid()
+            proxmox.nodes(selected_node).qemu.create(
+                vmid=gitlab_vmid,
+                name=f'gitlab-{deployment_id.replace(".", "-")}',
+                memory=8192,
+                cores=4,
+                sockets=1,
+                cpu='host',
+                net0=f'virtio,bridge={bridge}',
+                scsihw='virtio-scsi-pci',
+                scsi0=f'{storage}:50',
+                ostype='l26',
+                boot='order=scsi0',
+                agent='enabled=1'
+            )
+            created_vms.append({
+                'vmid': gitlab_vmid,
+                'name': 'GitLab Server',
+                'type': 'qemu',
+                'resources': '4 CPU, 8GB RAM, 50GB disk'
+            })
+        except Exception as e:
+            errors.append(f'GitLab Server: {str(e)}')
+
+        # Create runner VMs/containers
+        for runner in runners:
+            try:
+                runner_vmid = get_next_vmid()
+                runner_name = f'runner-{runner}-{runner_vmid}'
+
+                # Determine if Linux (use LXC) or Windows (use QEMU)
+                is_linux = runner in ['debian', 'ubuntu', 'arch', 'rocky']
+                is_windows = runner.startswith('windows')
+
+                if is_linux:
+                    # Create LXC container for Linux runners
+                    # Map runner to template
+                    ostemplate_map = {
+                        'debian': 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst',
+                        'ubuntu': 'local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst',
+                        'arch': 'local:vztmpl/archlinux-base_20231015-1_amd64.tar.zst',
+                        'rocky': 'local:vztmpl/rockylinux-9-default_20221109_amd64.tar.xz'
+                    }
+
+                    proxmox.nodes(selected_node).lxc.create(
+                        vmid=runner_vmid,
+                        hostname=runner_name,
+                        ostemplate=ostemplate_map.get(runner, ostemplate_map['debian']),
+                        storage=storage,
+                        rootfs=f'{storage}:40',
+                        memory=4096,
+                        cores=2,
+                        net0=f'name=eth0,bridge={bridge},ip=dhcp',
+                        unprivileged=1,
+                        start=0,
+                        onboot=1
+                    )
+                    created_containers.append({
+                        'vmid': runner_vmid,
+                        'name': runner_name,
+                        'type': 'lxc',
+                        'os': runner,
+                        'resources': '2 CPU, 4GB RAM, 40GB disk'
+                    })
+
+                elif is_windows:
+                    # Create QEMU VM for Windows runners
+                    resources = {
+                        'windows-10': {'memory': 8192, 'cores': 4, 'disk': 60},
+                        'windows-11': {'memory': 8192, 'cores': 4, 'disk': 60},
+                        'windows-server-2022': {'memory': 16384, 'cores': 4, 'disk': 80},
+                        'windows-server-2025': {'memory': 16384, 'cores': 4, 'disk': 80}
+                    }
+                    res = resources.get(runner, {'memory': 8192, 'cores': 4, 'disk': 60})
+
+                    proxmox.nodes(selected_node).qemu.create(
+                        vmid=runner_vmid,
+                        name=runner_name,
+                        memory=res['memory'],
+                        cores=res['cores'],
+                        sockets=1,
+                        cpu='host',
+                        net0=f'virtio,bridge={bridge}',
+                        scsihw='virtio-scsi-pci',
+                        scsi0=f'{storage}:{res["disk"]}',
+                        ostype='win11',
+                        boot='order=scsi0',
+                        agent='enabled=1',
+                        bios='ovmf',
+                        machine='q35',
+                        efidisk0=f'{storage}:1'
+                    )
+                    created_vms.append({
+                        'vmid': runner_vmid,
+                        'name': runner_name,
+                        'type': 'qemu',
+                        'os': runner,
+                        'resources': f'{res["cores"]} CPU, {res["memory"]//1024}GB RAM, {res["disk"]}GB disk'
+                    })
+                else:
+                    # macOS - not supported on Proxmox
+                    errors.append(f'{runner}: macOS runners not supported on Proxmox')
+
+            except Exception as e:
+                errors.append(f'{runner}: {str(e)}')
+
+        # Build output summary
+        output_lines = [
+            f'Proxmox deployment for: {config.get("domain")}',
+            f'Node: {selected_node}',
+            f'Storage: {storage}',
+            f'Network: {bridge}',
+            ''
+        ]
+
+        if created_vms:
+            output_lines.append('Created VMs:')
+            for vm in created_vms:
+                output_lines.append(f'  - VMID {vm["vmid"]}: {vm["name"]} ({vm["resources"]})')
+
+        if created_containers:
+            output_lines.append('Created Containers:')
+            for ct in created_containers:
+                output_lines.append(f'  - CTID {ct["vmid"]}: {ct["name"]} ({ct["resources"]})')
+
+        if errors:
+            output_lines.append('')
+            output_lines.append('Errors:')
+            for err in errors:
+                output_lines.append(f'  - {err}')
+            output_lines.append('')
+            output_lines.append('Note: Some errors may be due to missing OS templates.')
+            output_lines.append('Download templates via: Proxmox UI > local storage > CT Templates')
+
+        if not created_vms and not created_containers:
+            output_lines.append('')
+            output_lines.append('No VMs/containers were created.')
+        else:
+            output_lines.append('')
+            output_lines.append('Next steps:')
+            output_lines.append('1. Install OS on VMs (attach ISO or use cloud-init)')
+            output_lines.append('2. Start VMs/containers from Proxmox UI')
+            output_lines.append('3. Install GitLab and runners on each machine')
+
         return jsonify({
-            'success': True,
-            'message': f'Proxmox deployment plan created for node: {selected_node}',
-            'output': f'''Proxmox deployment ready for: {config.get("domain")}
-
-Target node: {selected_node}
-Storage: {provider_config.get("storage", "local-lvm")}
-Network bridge: {provider_config.get("bridge", "vmbr0")}
-
-VMs to create:
-- GitLab Server (4 CPU, 8GB RAM, 50GB disk)
-{chr(10).join(f"- {r} runner" for r in runners) if runners else "- No runners selected"}
-
-This is a deployment preview. Full VM provisioning requires additional setup.
-''',
+            'success': len(errors) == 0 or len(created_vms) > 0 or len(created_containers) > 0,
+            'message': f'Created {len(created_vms)} VMs and {len(created_containers)} containers',
+            'output': '\n'.join(output_lines),
+            'created_vms': created_vms,
+            'created_containers': created_containers,
+            'errors': errors,
             'runner_urls': []
         })
 
