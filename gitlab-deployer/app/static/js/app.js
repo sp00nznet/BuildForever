@@ -17,6 +17,14 @@ const RUNNER_RESOURCES = {
 // Store node capacity after successful connection test
 let nodeCapacity = null;
 
+// Toggle collapsible section
+function toggleSection(headerElement) {
+    const section = headerElement.closest('.form-section.collapsible');
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     const deploymentForm = document.getElementById('deploymentForm');
