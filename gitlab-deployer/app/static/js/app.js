@@ -506,6 +506,11 @@ function loadSavedConfig() {
                     setProviderConfig(config.proxmox_config);
                 }
 
+                // Restore network settings
+                if (config.network_config) {
+                    setNetworkConfig(config.network_config);
+                }
+
                 // Set runner checkboxes
                 document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
                     checkbox.checked = config.runners && config.runners.includes(checkbox.value);
@@ -572,6 +577,9 @@ function saveCurrentConfig() {
         windows_isos: proxmoxConfig.windows_isos
     };
 
+    // Get network config
+    const networkConfig = getNetworkConfig();
+
     const config = {
         name: name,
         domain: domain,
@@ -583,7 +591,9 @@ function saveCurrentConfig() {
         base_domain: document.getElementById('baseDomain')?.value || '',
         traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
         // Proxmox settings
-        proxmox_config: proxmoxConfigToSave
+        proxmox_config: proxmoxConfigToSave,
+        // Network settings
+        network_config: networkConfig
     };
 
     // Include password if checkbox is checked
@@ -746,6 +756,56 @@ function setProviderConfig(config) {
     }
 }
 
+// Get network configuration
+function getNetworkConfig() {
+    const useStaticIps = document.getElementById('useStaticIps')?.checked || false;
+    const config = {
+        use_static_ips: useStaticIps,
+        subnet: document.getElementById('networkSubnet')?.value || '',
+        gateway: document.getElementById('networkGateway')?.value || '',
+        dns: document.getElementById('networkDns')?.value || '',
+        ip_assignments: {}
+    };
+
+    // Collect all IP assignments (including dynamically added runner IPs)
+    document.querySelectorAll('#ipAssignments .ip-assignment-row').forEach(row => {
+        const input = row.querySelector('input.ip-input');
+        if (input && input.id) {
+            const hostId = input.id.replace('ip-', '');
+            config.ip_assignments[hostId] = input.value || '';
+        }
+    });
+
+    return config;
+}
+
+// Set network configuration
+function setNetworkConfig(config) {
+    if (!config) return;
+
+    // Set the static IPs checkbox
+    const useStaticIps = document.getElementById('useStaticIps');
+    if (useStaticIps) {
+        useStaticIps.checked = config.use_static_ips || false;
+        toggleStaticIpConfig(); // Show/hide the static IP config section
+    }
+
+    // Set network values
+    if (document.getElementById('networkSubnet')) document.getElementById('networkSubnet').value = config.subnet || '';
+    if (document.getElementById('networkGateway')) document.getElementById('networkGateway').value = config.gateway || '';
+    if (document.getElementById('networkDns')) document.getElementById('networkDns').value = config.dns || '';
+
+    // Set IP assignments
+    if (config.ip_assignments) {
+        Object.entries(config.ip_assignments).forEach(([hostId, ip]) => {
+            const input = document.getElementById(`ip-${hostId}`);
+            if (input) {
+                input.value = ip || '';
+            }
+        });
+    }
+}
+
 // Test Proxmox connection
 function testProxmoxConnection() {
     const config = getProviderConfig();
@@ -820,9 +880,7 @@ function refreshProxmoxIsos() {
         return;
     }
 
-    const isoList = document.getElementById('isoList');
-
-    isoList.innerHTML = '<p>Loading ISOs from Proxmox storage...</p>';
+    showStatus('info', 'Loading ISOs from Proxmox storage...');
 
     // Use iso_storage for fetching ISOs
     const fetchConfig = {
@@ -840,18 +898,19 @@ function refreshProxmoxIsos() {
         if (data.success) {
             availableIsos = data.isos;
             updateAllIsoDropdowns(data.isos);
-            updateIsoList(data.isos);
 
             if (data.isos.length === 0) {
                 const isoStorage = config.iso_storage || 'local';
-                isoList.innerHTML = `<p class="empty-message">No ISOs found in "${isoStorage}" storage. Upload Windows ISOs to your Proxmox server.</p>`;
+                showStatus('warning', `No ISOs found in "${isoStorage}" storage. Upload Windows ISOs to your Proxmox server.`);
+            } else {
+                showStatus('success', `Loaded ${data.isos.length} ISOs from storage`);
             }
         } else {
-            isoList.innerHTML = `<p class="error-message">Failed to load ISOs: ${data.error}</p>`;
+            showStatus('error', `Failed to load ISOs: ${data.error}`);
         }
     })
     .catch(error => {
-        isoList.innerHTML = `<p class="error-message">Failed to load ISOs: ${error.message}</p>`;
+        showStatus('error', `Failed to load ISOs: ${error.message}`);
     });
 }
 
@@ -914,59 +973,6 @@ function updateAllIsoDropdowns(isos) {
     }
 }
 
-// Update ISO list display
-function updateIsoList(isos) {
-    const list = document.getElementById('isoList');
-    if (!list) return;
-
-    if (isos.length === 0) {
-        list.innerHTML = '<p class="empty-message">No ISOs found. Upload Windows ISOs to your Proxmox storage.</p>';
-        return;
-    }
-
-    const windowsIsos = isos.filter(iso => iso.type === 'windows');
-    const otherIsos = isos.filter(iso => iso.type !== 'windows');
-
-    let html = '';
-
-    if (windowsIsos.length > 0) {
-        html += '<div class="iso-category"><h5>Windows ISOs</h5><ul class="iso-items">';
-        windowsIsos.forEach(iso => {
-            html += `<li class="iso-item windows" onclick="selectIso('${iso.volid}')">
-                <span class="iso-name">${iso.filename}</span>
-                <span class="iso-size">${iso.size_display}</span>
-            </li>`;
-        });
-        html += '</ul></div>';
-    }
-
-    if (otherIsos.length > 0) {
-        html += '<div class="iso-category"><h5>Other ISOs</h5><ul class="iso-items">';
-        otherIsos.forEach(iso => {
-            html += `<li class="iso-item" onclick="selectIso('${iso.volid}')">
-                <span class="iso-name">${iso.filename}</span>
-                <span class="iso-size">${iso.size_display}</span>
-            </li>`;
-        });
-        html += '</ul></div>';
-    }
-
-    list.innerHTML = html;
-}
-
-// Select an ISO from the list
-function selectIso(volid) {
-    const select = document.getElementById('windowsIsoSelect');
-    if (select) {
-        select.value = volid;
-    }
-
-    // Highlight selected item in list
-    document.querySelectorAll('.iso-item').forEach(item => {
-        item.classList.remove('selected');
-    });
-    document.querySelector(`.iso-item[onclick="selectIso('${volid}')"]`)?.classList.add('selected');
-}
 
 // Get selected Windows ISO
 function getSelectedWindowsIso() {
