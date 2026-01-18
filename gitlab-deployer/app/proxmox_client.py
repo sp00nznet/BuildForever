@@ -5,6 +5,7 @@ import json
 import tempfile
 import subprocess
 import hashlib
+import base64
 import paramiko
 import requests
 from io import StringIO
@@ -709,31 +710,42 @@ class ProxmoxClient:
         return None
 
     def provision_container(self, node, vmid, script, timeout=600):
-        """Execute a provisioning script inside a container via SSH."""
-        ip = self.get_container_ip(node, vmid)
-        if not ip:
-            return {'success': False, 'error': 'Could not get container IP'}
+        """
+        Execute a provisioning script inside a container using pct exec via Proxmox host.
+        This method SSH's to the Proxmox host and uses 'pct exec' to run commands
+        inside the container, avoiding the need for SSH inside the container itself.
+        """
+        # Wait for container to be running
+        start_time = time.time()
+        while time.time() - start_time < 60:
+            try:
+                status = self.proxmox.nodes(node).lxc(vmid).status.current.get()
+                if status.get('status') == 'running':
+                    break
+            except Exception:
+                pass
+            time.sleep(3)
 
-        # Wait for SSH to be ready
+        # SSH to Proxmox host and use pct exec
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        start_time = time.time()
-        connected = False
-        while time.time() - start_time < 120:
-            try:
-                ssh.connect(ip, username='root', password='root', timeout=10)
-                connected = True
-                break
-            except Exception:
-                time.sleep(5)
-
-        if not connected:
-            return {'success': False, 'error': 'Could not connect via SSH'}
-
         try:
-            # Execute the script
-            stdin, stdout, stderr = ssh.exec_command(f'bash -c "{script}"', timeout=timeout)
+            # Connect to Proxmox host
+            ssh.connect(
+                self.host,
+                username='root',
+                password=self.password,
+                timeout=30
+            )
+
+            # Base64 encode the script and pipe it to bash inside the container
+            script_b64 = base64.b64encode(script.encode()).decode()
+
+            # Use pct exec to run bash, piping the decoded script to it
+            exec_cmd = f'echo "{script_b64}" | base64 -d | pct exec {vmid} -- bash -s'
+
+            stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
@@ -744,8 +756,12 @@ class ProxmoxClient:
                 return {'success': True, 'output': output}
             else:
                 return {'success': False, 'error': errors or output, 'exit_code': exit_code}
+
         except Exception as e:
-            ssh.close()
+            try:
+                ssh.close()
+            except Exception:
+                pass
             return {'success': False, 'error': str(e)}
 
     # =========================================================================
