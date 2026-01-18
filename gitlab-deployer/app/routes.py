@@ -530,20 +530,31 @@ def execute_proxmox_deployment(config, deployment_id):
                     win_username = deploy_credential['username'] if deploy_credential else 'Admin'
                     win_password = deploy_credential.get('password', 'BuildForever!') if deploy_credential else 'BuildForever!'
 
-                    # Create unattended Windows ISO with credentials baked in
-                    iso_result = client.create_unattended_windows_iso(
-                        node=selected_node,
-                        storage='local',
-                        windows_type=runner,
-                        username=win_username,
-                        password=win_password,
-                        gitlab_url=gitlab_url,
-                        runner_token=None,  # Token would come from GitLab API after it's running
-                        static_ip=runner_static_ip,
-                        gateway=network_gateway if runner_static_ip else None,
-                        dns=network_dns
-                    )
-                    windows_iso = iso_result.get('iso') if iso_result.get('success') else None
+                    # Check if user selected a specific ISO from Proxmox storage
+                    user_selected_iso = provider_config.get('windows_iso', '')
+                    windows_iso = None
+                    iso_source = 'none'
+
+                    if user_selected_iso:
+                        # User selected an ISO from Proxmox storage - use it directly
+                        windows_iso = user_selected_iso
+                        iso_source = 'user-selected'
+                    else:
+                        # Try to create unattended Windows ISO with credentials baked in
+                        iso_result = client.create_unattended_windows_iso(
+                            node=selected_node,
+                            storage='local',
+                            windows_type=runner,
+                            username=win_username,
+                            password=win_password,
+                            gitlab_url=gitlab_url,
+                            runner_token=None,  # Token would come from GitLab API after it's running
+                            static_ip=runner_static_ip,
+                            gateway=network_gateway if runner_static_ip else None,
+                            dns=network_dns
+                        )
+                        windows_iso = iso_result.get('iso') if iso_result.get('success') else None
+                        iso_source = 'auto-created' if windows_iso else 'failed'
 
                     # Create QEMU VM for Windows
                     result = client.create_vm(
@@ -560,7 +571,14 @@ def execute_proxmox_deployment(config, deployment_id):
                     )
 
                     if result['success']:
-                        iso_status = 'unattended ISO attached' if windows_iso else 'ISO creation failed'
+                        # Determine status message based on ISO source
+                        if iso_source == 'user-selected':
+                            iso_status = 'user ISO attached'
+                        elif iso_source == 'auto-created':
+                            iso_status = 'unattended ISO attached'
+                        else:
+                            iso_status = 'ISO creation failed'
+
                         cred_info = {
                             'credential': deploy_credential['name'] if deploy_credential else 'default',
                             'credential_user': win_username,
@@ -572,15 +590,19 @@ def execute_proxmox_deployment(config, deployment_id):
                             'os': runner,
                             'status': f'created ({iso_status})',
                             'iso': windows_iso,
+                            'iso_source': iso_source,
                             'ip_config': runner_ip_config,
                             'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk',
                             **cred_info
                         })
 
-                        # Start VM - Windows will install automatically
+                        # Start VM - Windows will install automatically (or user will install manually)
                         if windows_iso:
                             client.start_vm(selected_node, runner_vmid)
-                            created[-1]['status'] = 'started (Windows auto-installing)'
+                            if iso_source == 'user-selected':
+                                created[-1]['status'] = 'started (manual Windows install)'
+                            else:
+                                created[-1]['status'] = 'started (Windows auto-installing)'
                     else:
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
@@ -1184,6 +1206,107 @@ def test_proxmox_connection(config):
         return jsonify({
             'success': False,
             'error': f'Connection failed: {str(e)}'
+        }), 400
+
+
+# ============================================================================
+# Proxmox ISO Management API
+# ============================================================================
+
+@bp.route('/api/proxmox/isos', methods=['POST'])
+def get_proxmox_isos():
+    """Get list of available ISOs from Proxmox storage"""
+    try:
+        from proxmoxer import ProxmoxAPI
+
+        config = request.json or {}
+        host = config.get('host')
+        port = config.get('port', 8006)
+        user = config.get('user')
+        password = config.get('password')
+        verify_ssl = config.get('verify_ssl', False)
+        target_node = config.get('node', 'pve')
+        storage = config.get('storage', 'local')
+
+        if not all([host, user, password]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required connection parameters'
+            }), 400
+
+        # Connect to Proxmox
+        proxmox = ProxmoxAPI(
+            host,
+            port=port,
+            user=user,
+            password=password,
+            verify_ssl=verify_ssl
+        )
+
+        # Get nodes to find the right one
+        nodes = proxmox.nodes.get()
+        node_names = [node['node'] for node in nodes] if nodes else []
+        selected_node = target_node if target_node in node_names else (node_names[0] if node_names else None)
+
+        if not selected_node:
+            return jsonify({
+                'success': False,
+                'error': 'No Proxmox nodes available'
+            }), 400
+
+        # Get storage content - ISO files
+        isos = []
+        try:
+            # Try 'local' storage first (where ISOs are typically stored)
+            iso_storage = 'local' if storage == 'local-lvm' else storage
+            content = proxmox.nodes(selected_node).storage(iso_storage).content.get()
+            for item in content:
+                if item.get('content') == 'iso':
+                    volid = item.get('volid', '')
+                    filename = volid.split('/')[-1] if '/' in volid else volid.split(':')[-1] if ':' in volid else volid
+                    size_mb = item.get('size', 0) // (1024 * 1024)
+
+                    # Categorize the ISO
+                    lower_name = filename.lower()
+                    iso_type = 'other'
+                    if 'windows' in lower_name or 'win10' in lower_name or 'win11' in lower_name:
+                        iso_type = 'windows'
+                    elif 'debian' in lower_name or 'ubuntu' in lower_name or 'linux' in lower_name or 'rocky' in lower_name or 'arch' in lower_name:
+                        iso_type = 'linux'
+                    elif 'macos' in lower_name or 'osx' in lower_name:
+                        iso_type = 'macos'
+
+                    isos.append({
+                        'volid': volid,
+                        'filename': filename,
+                        'size': item.get('size', 0),
+                        'size_mb': size_mb,
+                        'size_display': f'{size_mb} MB' if size_mb < 1024 else f'{size_mb / 1024:.1f} GB',
+                        'type': iso_type
+                    })
+        except Exception as e:
+            # Storage might not exist or have no content
+            pass
+
+        # Sort: Windows first, then by name
+        isos.sort(key=lambda x: (0 if x['type'] == 'windows' else 1, x['filename']))
+
+        return jsonify({
+            'success': True,
+            'isos': isos,
+            'node': selected_node,
+            'storage': iso_storage if 'iso_storage' in dir() else storage
+        })
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'proxmoxer library not installed. Run: pip install proxmoxer'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to get ISOs: {str(e)}'
         }), 400
 
 

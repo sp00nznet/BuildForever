@@ -92,6 +92,27 @@
                         </div>
                         <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
 
+                        <!-- Windows ISO Selection -->
+                        <div id="windowsIsoSection" class="iso-selection-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px; display: none;">
+                            <h4>Windows ISO Selection</h4>
+                            <p class="section-description">Select existing ISOs from your Proxmox storage instead of auto-downloading.</p>
+
+                            <div class="form-group">
+                                <label for="windowsIsoSelect">Windows ISO:</label>
+                                <div class="iso-select-row">
+                                    <select id="windowsIsoSelect" name="windowsIsoSelect">
+                                        <option value="">-- Auto-download (may fail) --</option>
+                                    </select>
+                                    <button type="button" class="btn btn-small btn-secondary" onclick="refreshProxmoxIsos()">Refresh ISOs</button>
+                                </div>
+                                <small>Select a Windows ISO already uploaded to Proxmox storage</small>
+                            </div>
+
+                            <div id="isoList" class="iso-list">
+                                <p class="empty-message">Click "Refresh ISOs" after connecting to Proxmox to see available ISOs.</p>
+                            </div>
+                        </div>
+
                         <!-- Network Configuration -->
                         <div class="network-config-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
                             <h4>Network Configuration</h4>
