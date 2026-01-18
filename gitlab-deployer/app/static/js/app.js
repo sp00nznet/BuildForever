@@ -677,7 +677,8 @@ function getProviderConfig(provider) {
                 password: document.getElementById('proxmoxPassword')?.value || '',
                 verify_ssl: document.getElementById('proxmoxVerifySSL')?.checked || false,
                 storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
-                bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0'
+                bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0',
+                windows_iso: document.getElementById('windowsIsoSelect')?.value || ''
             };
         case 'docker':
         default:
@@ -728,15 +729,184 @@ function testProxmoxConnection() {
             if (data.capacity) {
                 setNodeCapacity(data.capacity, data.node_info || config.node);
             }
+
+            // Show ISO selection section and auto-refresh ISOs
+            showWindowsIsoSection();
+            refreshProxmoxIsos();
         } else {
             showStatus('error', `Connection failed: ${data.error}`);
             hideNodeCapacity();
+            hideWindowsIsoSection();
         }
     })
     .catch(error => {
         showStatus('error', 'Connection test failed: ' + error.message);
         hideNodeCapacity();
+        hideWindowsIsoSection();
     });
+}
+
+// ============================================================================
+// Windows ISO Selection Functions
+// ============================================================================
+
+// Store available ISOs
+let availableIsos = [];
+
+// Show Windows ISO section
+function showWindowsIsoSection() {
+    const section = document.getElementById('windowsIsoSection');
+    if (section) {
+        section.style.display = 'block';
+    }
+}
+
+// Hide Windows ISO section
+function hideWindowsIsoSection() {
+    const section = document.getElementById('windowsIsoSection');
+    if (section) {
+        section.style.display = 'none';
+    }
+}
+
+// Refresh ISOs from Proxmox
+function refreshProxmoxIsos() {
+    const config = getProviderConfig('proxmox');
+
+    if (!config.host || !config.user || !config.password) {
+        showStatus('error', 'Please fill in Proxmox connection details first');
+        return;
+    }
+
+    const isoList = document.getElementById('isoList');
+    const isoSelect = document.getElementById('windowsIsoSelect');
+
+    isoList.innerHTML = '<p>Loading ISOs from Proxmox storage...</p>';
+
+    fetch('/api/proxmox/isos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            availableIsos = data.isos;
+            updateIsoDropdown(data.isos);
+            updateIsoList(data.isos);
+
+            if (data.isos.length === 0) {
+                isoList.innerHTML = '<p class="empty-message">No ISOs found in Proxmox storage. Upload ISOs to the "local" storage on your Proxmox server.</p>';
+            }
+        } else {
+            isoList.innerHTML = `<p class="error-message">Failed to load ISOs: ${data.error}</p>`;
+        }
+    })
+    .catch(error => {
+        isoList.innerHTML = `<p class="error-message">Failed to load ISOs: ${error.message}</p>`;
+    });
+}
+
+// Update ISO dropdown
+function updateIsoDropdown(isos) {
+    const select = document.getElementById('windowsIsoSelect');
+    if (!select) return;
+
+    // Clear and rebuild
+    select.innerHTML = '<option value="">-- Auto-download (may fail) --</option>';
+
+    // Filter for Windows ISOs
+    const windowsIsos = isos.filter(iso => iso.type === 'windows');
+
+    if (windowsIsos.length > 0) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = 'Windows ISOs';
+
+        windowsIsos.forEach(iso => {
+            const option = document.createElement('option');
+            option.value = iso.volid;
+            option.textContent = `${iso.filename} (${iso.size_display})`;
+            optgroup.appendChild(option);
+        });
+
+        select.appendChild(optgroup);
+    }
+
+    // Add other ISOs in a separate group
+    const otherIsos = isos.filter(iso => iso.type !== 'windows');
+    if (otherIsos.length > 0) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = 'Other ISOs';
+
+        otherIsos.forEach(iso => {
+            const option = document.createElement('option');
+            option.value = iso.volid;
+            option.textContent = `${iso.filename} (${iso.size_display})`;
+            optgroup.appendChild(option);
+        });
+
+        select.appendChild(optgroup);
+    }
+}
+
+// Update ISO list display
+function updateIsoList(isos) {
+    const list = document.getElementById('isoList');
+    if (!list) return;
+
+    if (isos.length === 0) {
+        list.innerHTML = '<p class="empty-message">No ISOs found. Upload Windows ISOs to your Proxmox storage.</p>';
+        return;
+    }
+
+    const windowsIsos = isos.filter(iso => iso.type === 'windows');
+    const otherIsos = isos.filter(iso => iso.type !== 'windows');
+
+    let html = '';
+
+    if (windowsIsos.length > 0) {
+        html += '<div class="iso-category"><h5>Windows ISOs</h5><ul class="iso-items">';
+        windowsIsos.forEach(iso => {
+            html += `<li class="iso-item windows" onclick="selectIso('${iso.volid}')">
+                <span class="iso-name">${iso.filename}</span>
+                <span class="iso-size">${iso.size_display}</span>
+            </li>`;
+        });
+        html += '</ul></div>';
+    }
+
+    if (otherIsos.length > 0) {
+        html += '<div class="iso-category"><h5>Other ISOs</h5><ul class="iso-items">';
+        otherIsos.forEach(iso => {
+            html += `<li class="iso-item" onclick="selectIso('${iso.volid}')">
+                <span class="iso-name">${iso.filename}</span>
+                <span class="iso-size">${iso.size_display}</span>
+            </li>`;
+        });
+        html += '</ul></div>';
+    }
+
+    list.innerHTML = html;
+}
+
+// Select an ISO from the list
+function selectIso(volid) {
+    const select = document.getElementById('windowsIsoSelect');
+    if (select) {
+        select.value = volid;
+    }
+
+    // Highlight selected item in list
+    document.querySelectorAll('.iso-item').forEach(item => {
+        item.classList.remove('selected');
+    });
+    document.querySelector(`.iso-item[onclick="selectIso('${volid}')"]`)?.classList.add('selected');
+}
+
+// Get selected Windows ISO
+function getSelectedWindowsIso() {
+    const select = document.getElementById('windowsIsoSelect');
+    return select ? select.value : '';
 }
 
 // ============================================================================

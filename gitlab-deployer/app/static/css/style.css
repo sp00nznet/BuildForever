@@ -1068,3 +1068,122 @@ footer {
         width: 100%;
     }
 }
+
+/* ============================================================================
+   Windows ISO Selection Styles
+   ============================================================================ */
+
+.iso-selection-section h4 {
+    margin-bottom: 10px;
+    color: var(--secondary-color);
+}
+
+.iso-select-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.iso-select-row select {
+    flex: 1;
+}
+
+.iso-list {
+    margin-top: 15px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    padding: 15px;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.iso-list .empty-message,
+.iso-list .error-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: 0;
+}
+
+.iso-list .error-message {
+    color: var(--error-color);
+}
+
+.iso-category {
+    margin-bottom: 15px;
+}
+
+.iso-category:last-child {
+    margin-bottom: 0;
+}
+
+.iso-category h5 {
+    font-size: 0.9em;
+    color: var(--secondary-color);
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #ddd;
+}
+
+.iso-items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.iso-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: white;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 2px solid transparent;
+}
+
+.iso-item:last-child {
+    margin-bottom: 0;
+}
+
+.iso-item:hover {
+    background: #e8f0fe;
+    border-color: var(--primary-color);
+}
+
+.iso-item.selected {
+    background: #fff3e0;
+    border-color: var(--primary-color);
+}
+
+.iso-item.windows {
+    border-left: 3px solid #0078d4;
+}
+
+.iso-name {
+    font-weight: 500;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-right: 10px;
+}
+
+.iso-size {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .iso-select-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .iso-select-row button {
+        width: 100%;
+    }
+}
