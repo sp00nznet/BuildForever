@@ -72,6 +72,59 @@ header h1 {
     font-size: 1.5em;
 }
 
+/* Collapsible Sections */
+.form-section.collapsible .section-header.clickable {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    margin: -10px 0 0 0;
+    transition: background-color 0.2s;
+    border-radius: 5px;
+}
+
+.form-section.collapsible .section-header.clickable:hover {
+    background-color: rgba(0, 0, 0, 0.03);
+    margin-left: -10px;
+    margin-right: -10px;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+.form-section.collapsible .section-header h2 {
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.collapse-icon {
+    font-size: 0.7em;
+    transition: transform 0.3s ease;
+    display: inline-block;
+}
+
+.form-section.collapsible.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+}
+
+.form-section.collapsible .section-content {
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    max-height: 2000px;
+    opacity: 1;
+    padding-top: 20px;
+}
+
+.form-section.collapsible.collapsed .section-content {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
 .form-group {
     margin-bottom: 20px;
 }

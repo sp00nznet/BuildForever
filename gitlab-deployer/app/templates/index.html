@@ -19,26 +19,31 @@
         <div class="main-content">
             <form id="deploymentForm">
                 <!-- Saved Configurations Section -->
-                <div class="form-section saved-configs-section">
-                    <div class="section-header">
-                        <h2>Saved Configurations</h2>
-                        <button type="button" class="btn btn-small btn-secondary" onclick="toggleSaveConfigModal()">Save Current</button>
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> Saved Configurations</h2>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="event.stopPropagation(); toggleSaveConfigModal()">Save Current</button>
                     </div>
-                    <div class="form-group">
-                        <label for="savedConfig">Load Configuration:</label>
-                        <select id="savedConfig" name="savedConfig" onchange="loadSavedConfig()">
-                            <option value="">-- Select a saved configuration --</option>
-                        </select>
-                        <small>Quickly load a previously saved configuration</small>
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label for="savedConfig">Load Configuration:</label>
+                            <select id="savedConfig" name="savedConfig" onchange="loadSavedConfig()">
+                                <option value="">-- Select a saved configuration --</option>
+                            </select>
+                            <small>Quickly load a previously saved configuration</small>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Proxmox VE Connection Section -->
-                <div class="form-section">
-                    <h2>Proxmox VE Connection</h2>
-                    <p class="section-description">Configure your Proxmox server connection for deploying the GitLab build farm.</p>
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> Proxmox VE Connection</h2>
+                    </div>
+                    <div class="section-content">
+                        <p class="section-description">Configure your Proxmox server connection for deploying the GitLab build farm.</p>
 
-                    <div class="form-group">
+                        <div class="form-group">
                         <label for="proxmoxHost">Proxmox Host:</label>
                         <input type="text" id="proxmoxHost" name="proxmoxHost" placeholder="192.168.1.100 or proxmox.local">
                         <small>IP address or hostname of your Proxmox server</small>
@@ -168,91 +173,101 @@
                             <small>Leave IP blank to use DHCP for that specific host</small>
                         </div>
                     </div>
+                    </div>
                 </div>
 
                 <!-- Credentials Section -->
-                <div class="form-section credentials-section">
-                    <div class="section-header">
-                        <h2>VM/Container Credentials</h2>
-                        <button type="button" class="btn btn-small btn-secondary" onclick="toggleCredentialModal()">Add Credential</button>
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> VM/Container Credentials</h2>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="event.stopPropagation(); toggleCredentialModal()">Add Credential</button>
                     </div>
-                    <p class="section-description">Credentials will be injected into all deployed VMs and containers (Windows, Linux, macOS).</p>
+                    <div class="section-content">
+                        <p class="section-description">Credentials will be injected into all deployed VMs and containers (Windows, Linux, macOS).</p>
 
-                    <div class="form-group">
-                        <label for="deployCredential">Deploy With Credential:</label>
-                        <select id="deployCredential" name="deployCredential">
-                            <option value="">-- No credential (use defaults) --</option>
-                        </select>
-                        <small>Selected credential will be configured on all VMs/containers</small>
-                    </div>
+                        <div class="form-group">
+                            <label for="deployCredential">Deploy With Credential:</label>
+                            <select id="deployCredential" name="deployCredential">
+                                <option value="">-- No credential (use defaults) --</option>
+                            </select>
+                            <small>Selected credential will be configured on all VMs/containers</small>
+                        </div>
 
-                    <div id="credentialsList" class="credentials-list">
-                        <!-- Populated by JavaScript -->
+                        <div id="credentialsList" class="credentials-list">
+                            <!-- Populated by JavaScript -->
+                        </div>
                     </div>
                 </div>
 
-                <div class="form-section">
-                    <h2>GitLab Server Configuration</h2>
-                    <div class="form-group">
-                        <label for="domain">GitLab Domain:</label>
-                        <input type="text" id="domain" name="domain" placeholder="gitlab.example.com" required>
-                        <small>The domain where GitLab will be accessible</small>
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> GitLab Server Configuration</h2>
                     </div>
-
-                    <div class="form-group">
-                        <label for="email">Email:</label>
-                        <input type="email" id="email" name="email" placeholder="admin@example.com" required>
-                        <small>Email for Let's Encrypt SSL certificate</small>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="adminPassword">Admin Password:</label>
-                        <input type="password" id="adminPassword" name="adminPassword" required>
-                        <small>Password for GitLab root account</small>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="confirmPassword">Confirm Password:</label>
-                        <input type="password" id="confirmPassword" name="confirmPassword" required>
-                    </div>
-
-                    <div class="form-group checkbox-group">
-                        <label>
-                            <input type="checkbox" id="letsencrypt" name="letsencrypt" checked>
-                            Enable Let's Encrypt SSL
-                        </label>
-                    </div>
-
-                    <div class="form-group checkbox-group">
-                        <label>
-                            <input type="checkbox" id="traefik" name="traefik">
-                            Enable Traefik Reverse Proxy
-                        </label>
-                        <small class="checkbox-help">Automatic SSL, load balancing, and service discovery</small>
-                    </div>
-
-                    <!-- Traefik Options (shown when Traefik is enabled) -->
-                    <div id="traefikOptions" class="conditional-options" style="display: none;">
+                    <div class="section-content">
                         <div class="form-group">
-                            <label for="baseDomain">Base Domain:</label>
-                            <input type="text" id="baseDomain" name="baseDomain" placeholder="example.com">
-                            <small>Base domain for all services (e.g., gitlab.example.com)</small>
+                            <label for="domain">GitLab Domain:</label>
+                            <input type="text" id="domain" name="domain" placeholder="gitlab.example.com" required>
+                            <small>The domain where GitLab will be accessible</small>
                         </div>
+
+                        <div class="form-group">
+                            <label for="email">Email:</label>
+                            <input type="email" id="email" name="email" placeholder="admin@example.com" required>
+                            <small>Email for Let's Encrypt SSL certificate</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="adminPassword">Admin Password:</label>
+                            <input type="password" id="adminPassword" name="adminPassword" required>
+                            <small>Password for GitLab root account</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="confirmPassword">Confirm Password:</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" required>
+                        </div>
+
                         <div class="form-group checkbox-group">
                             <label>
-                                <input type="checkbox" id="traefikDashboard" name="traefikDashboard" checked>
-                                Enable Traefik Dashboard
+                                <input type="checkbox" id="letsencrypt" name="letsencrypt" checked>
+                                Enable Let's Encrypt SSL
                             </label>
-                            <small class="checkbox-help">Web UI for monitoring at traefik.yourdomain.com</small>
+                        </div>
+
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="traefik" name="traefik">
+                                Enable Traefik Reverse Proxy
+                            </label>
+                            <small class="checkbox-help">Automatic SSL, load balancing, and service discovery</small>
+                        </div>
+
+                        <!-- Traefik Options (shown when Traefik is enabled) -->
+                        <div id="traefikOptions" class="conditional-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="baseDomain">Base Domain:</label>
+                                <input type="text" id="baseDomain" name="baseDomain" placeholder="example.com">
+                                <small>Base domain for all services (e.g., gitlab.example.com)</small>
+                            </div>
+                            <div class="form-group checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="traefikDashboard" name="traefikDashboard" checked>
+                                    Enable Traefik Dashboard
+                                </label>
+                                <small class="checkbox-help">Web UI for monitoring at traefik.yourdomain.com</small>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="form-section">
-                    <h2>GitLab Runners - Select Build Platforms</h2>
-                    <p class="section-description">Choose which runners to deploy. Each runner will be automatically registered to your GitLab instance.</p>
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> GitLab Runners - Select Build Platforms</h2>
+                    </div>
+                    <div class="section-content">
+                        <p class="section-description">Choose which runners to deploy. Each runner will be automatically registered to your GitLab instance.</p>
 
-                    <div class="runner-actions top-actions">
+                        <div class="runner-actions top-actions">
                         <button type="button" class="btn btn-small btn-primary" onclick="selectAllRunners()">Select All</button>
                         <button type="button" class="btn btn-small btn-secondary" onclick="deselectAllRunners()">Deselect All</button>
                         <span class="selected-count">0 selected</span>
@@ -387,17 +402,18 @@
                         </div>
                     </div>
 
-                    <div class="runner-section">
-                        <h3>macOS (1)</h3>
-                        <div class="runner-grid">
-                            <label class="runner-option">
-                                <input type="checkbox" name="runners" value="macos">
-                                <span class="runner-card">
-                                    <span class="checkbox-indicator"></span>
-                                    <strong>macOS</strong>
-                                    <small>Apple platform builds</small>
-                                </span>
-                            </label>
+                        <div class="runner-section">
+                            <h3>macOS (1)</h3>
+                            <div class="runner-grid">
+                                <label class="runner-option">
+                                    <input type="checkbox" name="runners" value="macos">
+                                    <span class="runner-card">
+                                        <span class="checkbox-indicator"></span>
+                                        <strong>macOS</strong>
+                                        <small>Apple platform builds</small>
+                                    </span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>

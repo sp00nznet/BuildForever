@@ -1250,8 +1250,13 @@ echo GitLab Runner installation complete!
 
     def create_vm(self, node, vmid, name, memory, cores, storage, disk_size,
                   bridge='vmbr0', ostype='l26', iso=None, answer_iso=None, virtio_iso=None,
-                  bios='seabios', machine='pc', cpu='host', is_macos=False, is_windows=False):
-        """Create a QEMU VM."""
+                  bios='seabios', machine='pc', cpu='host', is_macos=False,
+                  is_windows=False, windows_version=None):
+        """Create a QEMU VM.
+
+        Args:
+            windows_version: 'windows-10', 'windows-11', 'windows-server-2022', 'windows-server-2025'
+        """
         params = {
             'vmid': vmid,
             'name': name,
@@ -1302,13 +1307,24 @@ echo GitLab Runner installation complete!
             })
         # Windows-specific configuration
         elif is_windows:
-            params.update({
-                'bios': 'ovmf',
-                'machine': 'q35',
-                'ostype': 'win11',
-                'efidisk0': f'{storage}:1',
-                'tpmstate0': f'{storage}:1,version=v2.0',
-            })
+            # Windows 11 and Server 2025 require UEFI + TPM
+            needs_uefi_tpm = windows_version in ['windows-11', 'windows-server-2025']
+
+            if needs_uefi_tpm:
+                params.update({
+                    'bios': 'ovmf',
+                    'machine': 'q35',
+                    'ostype': 'win11',
+                    'efidisk0': f'{storage}:1',
+                    'tpmstate0': f'{storage}:1,version=v2.0',
+                })
+            else:
+                # Windows 10 and Server 2022 - use SeaBIOS for better ISO compatibility
+                params.update({
+                    'bios': 'seabios',
+                    'machine': 'pc',
+                    'ostype': 'win10',
+                })
         else:
             params['bios'] = bios
             params['machine'] = machine
