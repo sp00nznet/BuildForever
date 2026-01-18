@@ -33,6 +33,125 @@
                     </div>
                 </div>
 
+                <!-- Infrastructure Provider Section -->
+                <div class="form-section">
+                    <h2>Infrastructure Provider</h2>
+                    <p class="section-description">Select where to deploy your GitLab build farm.</p>
+
+                    <div class="form-group">
+                        <label for="provider">Deploy To:</label>
+                        <select id="provider" name="provider" onchange="toggleProviderOptions()">
+                            <option value="docker">Local Docker (This Machine)</option>
+                            <option value="proxmox">Proxmox VE</option>
+                            <option value="vmware">VMware vSphere/ESXi</option>
+                            <option value="hyperv">Hyper-V</option>
+                        </select>
+                    </div>
+
+                    <!-- Proxmox Options -->
+                    <div id="proxmoxOptions" class="conditional-options provider-options" style="display: none;">
+                        <h4>Proxmox VE Connection</h4>
+                        <div class="form-group">
+                            <label for="proxmoxHost">Proxmox Host:</label>
+                            <input type="text" id="proxmoxHost" name="proxmoxHost" placeholder="192.168.1.100 or proxmox.local">
+                            <small>IP address or hostname of your Proxmox server</small>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="proxmoxPort">Port:</label>
+                                <input type="number" id="proxmoxPort" name="proxmoxPort" value="8006">
+                            </div>
+                            <div class="form-group half">
+                                <label for="proxmoxNode">Node Name:</label>
+                                <input type="text" id="proxmoxNode" name="proxmoxNode" placeholder="pve">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="proxmoxUser">Username:</label>
+                            <input type="text" id="proxmoxUser" name="proxmoxUser" placeholder="root@pam">
+                            <small>Format: user@realm (e.g., root@pam or admin@pve)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="proxmoxPassword">Password or API Token:</label>
+                            <input type="password" id="proxmoxPassword" name="proxmoxPassword">
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="proxmoxVerifySSL" name="proxmoxVerifySSL">
+                                Verify SSL Certificate
+                            </label>
+                            <small class="checkbox-help">Disable for self-signed certificates</small>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="proxmoxStorage">Storage:</label>
+                                <input type="text" id="proxmoxStorage" name="proxmoxStorage" placeholder="local-lvm">
+                            </div>
+                            <div class="form-group half">
+                                <label for="proxmoxBridge">Network Bridge:</label>
+                                <input type="text" id="proxmoxBridge" name="proxmoxBridge" placeholder="vmbr0">
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
+                    </div>
+
+                    <!-- VMware Options -->
+                    <div id="vmwareOptions" class="conditional-options provider-options" style="display: none;">
+                        <h4>VMware vSphere/ESXi Connection</h4>
+                        <div class="form-group">
+                            <label for="vmwareHost">vCenter/ESXi Host:</label>
+                            <input type="text" id="vmwareHost" name="vmwareHost" placeholder="vcenter.local or 192.168.1.100">
+                        </div>
+                        <div class="form-group">
+                            <label for="vmwareUser">Username:</label>
+                            <input type="text" id="vmwareUser" name="vmwareUser" placeholder="administrator@vsphere.local">
+                        </div>
+                        <div class="form-group">
+                            <label for="vmwarePassword">Password:</label>
+                            <input type="password" id="vmwarePassword" name="vmwarePassword">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="vmwareDatacenter">Datacenter:</label>
+                                <input type="text" id="vmwareDatacenter" name="vmwareDatacenter" placeholder="Datacenter1">
+                            </div>
+                            <div class="form-group half">
+                                <label for="vmwareDatastore">Datastore:</label>
+                                <input type="text" id="vmwareDatastore" name="vmwareDatastore" placeholder="datastore1">
+                            </div>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="vmwareVerifySSL" name="vmwareVerifySSL">
+                                Verify SSL Certificate
+                            </label>
+                        </div>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="testVMwareConnection()">Test Connection</button>
+                    </div>
+
+                    <!-- Hyper-V Options -->
+                    <div id="hypervOptions" class="conditional-options provider-options" style="display: none;">
+                        <h4>Hyper-V Connection</h4>
+                        <div class="form-group">
+                            <label for="hypervHost">Hyper-V Host:</label>
+                            <input type="text" id="hypervHost" name="hypervHost" placeholder="hyperv-server.local">
+                        </div>
+                        <div class="form-group">
+                            <label for="hypervUser">Username:</label>
+                            <input type="text" id="hypervUser" name="hypervUser" placeholder="Administrator">
+                        </div>
+                        <div class="form-group">
+                            <label for="hypervPassword">Password:</label>
+                            <input type="password" id="hypervPassword" name="hypervPassword">
+                        </div>
+                        <div class="form-group">
+                            <label for="hypervVSwitch">Virtual Switch:</label>
+                            <input type="text" id="hypervVSwitch" name="hypervVSwitch" placeholder="Default Switch">
+                        </div>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="testHypervConnection()">Test Connection</button>
+                    </div>
+                </div>
+
                 <div class="form-section">
                     <h2>GitLab Server Configuration</h2>
                     <div class="form-group">

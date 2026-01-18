@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedRunners.push(checkbox.value);
         });
 
+        // Get selected provider
+        const provider = document.getElementById('provider')?.value || 'docker';
+
         // Collect form data
         const deploymentData = {
             domain: document.getElementById('domain').value,
@@ -51,7 +54,10 @@ document.addEventListener('DOMContentLoaded', function() {
             // Traefik settings
             traefik_enabled: document.getElementById('traefik').checked,
             base_domain: document.getElementById('baseDomain')?.value || '',
-            traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false
+            traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
+            // Infrastructure provider
+            provider: provider,
+            provider_config: getProviderConfig(provider)
         };
 
         // Show loading status
@@ -501,3 +507,179 @@ document.addEventListener('keydown', function(e) {
         });
     }
 });
+
+// ============================================================================
+// Infrastructure Provider Functions
+// ============================================================================
+
+// Toggle provider options visibility
+function toggleProviderOptions() {
+    const provider = document.getElementById('provider').value;
+
+    // Hide all provider options
+    document.querySelectorAll('.provider-options').forEach(el => {
+        el.style.display = 'none';
+    });
+
+    // Show selected provider options
+    const optionsId = provider + 'Options';
+    const optionsEl = document.getElementById(optionsId);
+    if (optionsEl) {
+        optionsEl.style.display = 'block';
+    }
+}
+
+// Get provider-specific configuration
+function getProviderConfig(provider) {
+    switch (provider) {
+        case 'proxmox':
+            return {
+                host: document.getElementById('proxmoxHost')?.value || '',
+                port: parseInt(document.getElementById('proxmoxPort')?.value) || 8006,
+                node: document.getElementById('proxmoxNode')?.value || 'pve',
+                user: document.getElementById('proxmoxUser')?.value || '',
+                password: document.getElementById('proxmoxPassword')?.value || '',
+                verify_ssl: document.getElementById('proxmoxVerifySSL')?.checked || false,
+                storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
+                bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0'
+            };
+        case 'vmware':
+            return {
+                host: document.getElementById('vmwareHost')?.value || '',
+                user: document.getElementById('vmwareUser')?.value || '',
+                password: document.getElementById('vmwarePassword')?.value || '',
+                datacenter: document.getElementById('vmwareDatacenter')?.value || '',
+                datastore: document.getElementById('vmwareDatastore')?.value || '',
+                verify_ssl: document.getElementById('vmwareVerifySSL')?.checked || false
+            };
+        case 'hyperv':
+            return {
+                host: document.getElementById('hypervHost')?.value || '',
+                user: document.getElementById('hypervUser')?.value || '',
+                password: document.getElementById('hypervPassword')?.value || '',
+                vswitch: document.getElementById('hypervVSwitch')?.value || ''
+            };
+        case 'docker':
+        default:
+            return {};
+    }
+}
+
+// Set provider configuration in form
+function setProviderConfig(provider, config) {
+    if (!config) return;
+
+    switch (provider) {
+        case 'proxmox':
+            if (document.getElementById('proxmoxHost')) document.getElementById('proxmoxHost').value = config.host || '';
+            if (document.getElementById('proxmoxPort')) document.getElementById('proxmoxPort').value = config.port || 8006;
+            if (document.getElementById('proxmoxNode')) document.getElementById('proxmoxNode').value = config.node || '';
+            if (document.getElementById('proxmoxUser')) document.getElementById('proxmoxUser').value = config.user || '';
+            if (document.getElementById('proxmoxPassword')) document.getElementById('proxmoxPassword').value = config.password || '';
+            if (document.getElementById('proxmoxVerifySSL')) document.getElementById('proxmoxVerifySSL').checked = config.verify_ssl || false;
+            if (document.getElementById('proxmoxStorage')) document.getElementById('proxmoxStorage').value = config.storage || '';
+            if (document.getElementById('proxmoxBridge')) document.getElementById('proxmoxBridge').value = config.bridge || '';
+            break;
+        case 'vmware':
+            if (document.getElementById('vmwareHost')) document.getElementById('vmwareHost').value = config.host || '';
+            if (document.getElementById('vmwareUser')) document.getElementById('vmwareUser').value = config.user || '';
+            if (document.getElementById('vmwarePassword')) document.getElementById('vmwarePassword').value = config.password || '';
+            if (document.getElementById('vmwareDatacenter')) document.getElementById('vmwareDatacenter').value = config.datacenter || '';
+            if (document.getElementById('vmwareDatastore')) document.getElementById('vmwareDatastore').value = config.datastore || '';
+            if (document.getElementById('vmwareVerifySSL')) document.getElementById('vmwareVerifySSL').checked = config.verify_ssl || false;
+            break;
+        case 'hyperv':
+            if (document.getElementById('hypervHost')) document.getElementById('hypervHost').value = config.host || '';
+            if (document.getElementById('hypervUser')) document.getElementById('hypervUser').value = config.user || '';
+            if (document.getElementById('hypervPassword')) document.getElementById('hypervPassword').value = config.password || '';
+            if (document.getElementById('hypervVSwitch')) document.getElementById('hypervVSwitch').value = config.vswitch || '';
+            break;
+    }
+}
+
+// Test Proxmox connection
+function testProxmoxConnection() {
+    const config = getProviderConfig('proxmox');
+
+    if (!config.host || !config.user || !config.password) {
+        showStatus('error', 'Please fill in host, username, and password');
+        return;
+    }
+
+    showStatus('info', 'Testing Proxmox connection...');
+
+    fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'proxmox', config: config })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showStatus('success', `Connected to Proxmox! Node: ${data.node_info || config.node}`);
+        } else {
+            showStatus('error', `Connection failed: ${data.error}`);
+        }
+    })
+    .catch(error => {
+        showStatus('error', 'Connection test failed: ' + error.message);
+    });
+}
+
+// Test VMware connection
+function testVMwareConnection() {
+    const config = getProviderConfig('vmware');
+
+    if (!config.host || !config.user || !config.password) {
+        showStatus('error', 'Please fill in host, username, and password');
+        return;
+    }
+
+    showStatus('info', 'Testing VMware connection...');
+
+    fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'vmware', config: config })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showStatus('success', 'Connected to VMware vSphere!');
+        } else {
+            showStatus('error', `Connection failed: ${data.error}`);
+        }
+    })
+    .catch(error => {
+        showStatus('error', 'Connection test failed: ' + error.message);
+    });
+}
+
+// Test Hyper-V connection
+function testHypervConnection() {
+    const config = getProviderConfig('hyperv');
+
+    if (!config.host || !config.user || !config.password) {
+        showStatus('error', 'Please fill in host, username, and password');
+        return;
+    }
+
+    showStatus('info', 'Testing Hyper-V connection...');
+
+    fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'hyperv', config: config })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showStatus('success', 'Connected to Hyper-V!');
+        } else {
+            showStatus('error', `Connection failed: ${data.error}`);
+        }
+    })
+    .catch(error => {
+        showStatus('error', 'Connection test failed: ' + error.message);
+    });
+}

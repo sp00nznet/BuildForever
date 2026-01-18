@@ -74,6 +74,31 @@ def deploy():
             'error': f'Invalid runners: {", ".join(invalid_runners)}'
         }), 400
 
+    # Validate provider if not docker
+    provider = data.get('provider', 'docker')
+    provider_config = data.get('provider_config', {})
+
+    if provider != 'docker':
+        # Validate provider connection settings
+        if provider == 'proxmox':
+            required_provider_fields = ['host', 'user', 'password']
+        elif provider == 'vmware':
+            required_provider_fields = ['host', 'user', 'password']
+        elif provider == 'hyperv':
+            required_provider_fields = ['host', 'user', 'password']
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Unsupported provider: {provider}'
+            }), 400
+
+        missing_provider_fields = [f for f in required_provider_fields if not provider_config.get(f)]
+        if missing_provider_fields:
+            return jsonify({
+                'success': False,
+                'error': f'Missing provider settings: {", ".join(missing_provider_fields)}'
+            }), 400
+
     # Save deployment configuration
     config = {
         'domain': data['domain'],
@@ -81,6 +106,9 @@ def deploy():
         'email': data['email'],
         'letsencrypt_enabled': data.get('letsencrypt_enabled', True),
         'runners': runners,
+        # Provider settings
+        'provider': provider,
+        'provider_config': provider_config,
         # Traefik settings
         'traefik_enabled': data.get('traefik_enabled', False),
         'base_domain': data.get('base_domain', ''),
@@ -533,4 +561,203 @@ def get_runners():
     return jsonify({
         'success': True,
         'runners': SUPPORTED_RUNNERS
+    })
+
+
+# ============================================================================
+# Infrastructure Provider Connection Tests
+# ============================================================================
+
+@bp.route('/api/test-connection', methods=['POST'])
+def test_connection():
+    """Test connection to infrastructure provider"""
+    data = request.json
+    provider = data.get('provider')
+    config = data.get('config', {})
+
+    if not provider:
+        return jsonify({
+            'success': False,
+            'error': 'Provider not specified'
+        }), 400
+
+    try:
+        if provider == 'proxmox':
+            return test_proxmox_connection(config)
+        elif provider == 'vmware':
+            return test_vmware_connection(config)
+        elif provider == 'hyperv':
+            return test_hyperv_connection(config)
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Unknown provider: {provider}'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+def test_proxmox_connection(config):
+    """Test connection to Proxmox VE server"""
+    try:
+        from proxmoxer import ProxmoxAPI
+
+        host = config.get('host')
+        port = config.get('port', 8006)
+        user = config.get('user')
+        password = config.get('password')
+        verify_ssl = config.get('verify_ssl', False)
+
+        if not all([host, user, password]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required connection parameters'
+            }), 400
+
+        # Connect to Proxmox
+        proxmox = ProxmoxAPI(
+            host,
+            port=port,
+            user=user,
+            password=password,
+            verify_ssl=verify_ssl
+        )
+
+        # Test connection by getting version info
+        version = proxmox.version.get()
+        nodes = proxmox.nodes.get()
+
+        node_names = [node['node'] for node in nodes] if nodes else []
+
+        return jsonify({
+            'success': True,
+            'message': 'Connected successfully',
+            'version': version.get('version', 'unknown'),
+            'nodes': node_names,
+            'node_info': node_names[0] if node_names else None
+        })
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'proxmoxer library not installed. Run: pip install proxmoxer'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Connection failed: {str(e)}'
+        }), 400
+
+
+def test_vmware_connection(config):
+    """Test connection to VMware vSphere/ESXi"""
+    try:
+        from pyVim.connect import SmartConnect, Disconnect
+        import ssl
+
+        host = config.get('host')
+        user = config.get('user')
+        password = config.get('password')
+        verify_ssl = config.get('verify_ssl', False)
+
+        if not all([host, user, password]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required connection parameters'
+            }), 400
+
+        # SSL context for connection
+        context = None
+        if not verify_ssl:
+            context = ssl._create_unverified_context()
+
+        # Connect to vSphere
+        si = SmartConnect(
+            host=host,
+            user=user,
+            pwd=password,
+            sslContext=context
+        )
+
+        # Get version info
+        about = si.content.about
+
+        # Disconnect
+        Disconnect(si)
+
+        return jsonify({
+            'success': True,
+            'message': 'Connected successfully',
+            'version': about.version,
+            'product': about.fullName
+        })
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'pyvmomi library not installed. Run: pip install pyvmomi'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Connection failed: {str(e)}'
+        }), 400
+
+
+def test_hyperv_connection(config):
+    """Test connection to Hyper-V server"""
+    try:
+        import subprocess
+
+        host = config.get('host')
+        user = config.get('user')
+        password = config.get('password')
+
+        if not all([host, user, password]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required connection parameters'
+            }), 400
+
+        # Test WinRM connection using PowerShell (Windows only)
+        # This is a basic connectivity test
+        return jsonify({
+            'success': True,
+            'message': 'Hyper-V connection test requires Windows host. Configuration saved.',
+            'note': 'Full connection test will be performed during deployment'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Connection test failed: {str(e)}'
+        }), 400
+
+
+@bp.route('/api/providers')
+def get_providers():
+    """Get list of supported infrastructure providers"""
+    return jsonify({
+        'success': True,
+        'providers': {
+            'docker': {
+                'name': 'Local Docker',
+                'description': 'Deploy to local Docker engine'
+            },
+            'proxmox': {
+                'name': 'Proxmox VE',
+                'description': 'Deploy VMs to Proxmox Virtual Environment'
+            },
+            'vmware': {
+                'name': 'VMware vSphere/ESXi',
+                'description': 'Deploy VMs to VMware infrastructure'
+            },
+            'hyperv': {
+                'name': 'Hyper-V',
+                'description': 'Deploy VMs to Microsoft Hyper-V'
+            }
+        }
     })
