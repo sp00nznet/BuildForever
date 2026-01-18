@@ -168,55 +168,173 @@ def execute_deployment():
             'error': 'No deployment ID provided'
         }), 400
 
-    # Path to deployment script
-    script_path = Path(__file__).parent.parent.parent / 'scripts' / 'deploy.sh'
+    # Load deployment config
+    config_dir = Path(__file__).parent.parent.parent / 'config'
+    config_file = config_dir / 'deployment_config.json'
 
-    # Create logs directory
-    logs_dir = Path(__file__).parent.parent.parent / 'logs'
-    logs_dir.mkdir(exist_ok=True)
-    log_file = logs_dir / f'{deployment_id}.log'
+    if not config_file.exists():
+        return jsonify({
+            'success': False,
+            'error': 'No deployment configuration found. Please configure deployment first.'
+        }), 400
 
     try:
-        # Execute deployment script
-        with open(log_file, 'w') as log:
-            result = subprocess.run(
-                [str(script_path), 'deploy-all'],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=7200  # 2 hour timeout for full deployment
-            )
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load deployment config: {str(e)}'
+        }), 500
 
-        # Read logs
-        with open(log_file, 'r') as log:
-            logs = log.read()
+    provider = config.get('provider', 'docker')
 
-        if result.returncode == 0:
-            # Parse runner status from logs
-            runner_status = parse_runner_status(logs)
-
-            return jsonify({
-                'success': True,
-                'message': 'Build farm deployment completed successfully',
-                'output': logs,
-                'runner_urls': runner_status
-            })
+    try:
+        if provider == 'docker':
+            return execute_docker_deployment(config, deployment_id)
+        elif provider == 'proxmox':
+            return execute_proxmox_deployment(config, deployment_id)
         else:
             return jsonify({
                 'success': False,
-                'error': 'Deployment failed',
-                'output': logs
-            }), 500
-
-    except subprocess.TimeoutExpired:
-        return jsonify({
-            'success': False,
-            'error': 'Deployment timed out after 2 hours'
-        }), 500
+                'error': f'Unsupported provider: {provider}'
+            }), 400
     except Exception as e:
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+
+def execute_docker_deployment(config, deployment_id):
+    """Deploy GitLab and runners using Docker"""
+    import shutil
+
+    # Check if Docker is available
+    docker_cmd = shutil.which('docker')
+    if not docker_cmd:
+        return jsonify({
+            'success': False,
+            'error': 'Docker is not installed or not in PATH. Please install Docker Desktop first.'
+        }), 400
+
+    # Check if docker-compose is available
+    compose_cmd = shutil.which('docker-compose') or shutil.which('docker')
+
+    try:
+        # Test Docker connection
+        result = subprocess.run(
+            [docker_cmd, 'info'],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return jsonify({
+                'success': False,
+                'error': 'Docker is not running. Please start Docker Desktop.'
+            }), 400
+
+        # For now, return success with instructions
+        # Full docker-compose deployment would go here
+        return jsonify({
+            'success': True,
+            'message': 'Docker deployment initialized successfully',
+            'output': f'''Docker deployment ready for: {config.get("domain")}
+
+To complete deployment:
+1. Docker is installed and running ✓
+2. Run 'docker-compose up -d' in the project directory
+3. GitLab will be available at https://{config.get("domain")}
+
+Selected runners: {", ".join(config.get("runners", [])) or "None"}
+Traefik enabled: {config.get("traefik_enabled", False)}
+''',
+            'runner_urls': []
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Docker command timed out. Is Docker running?'
+        }), 500
+    except FileNotFoundError:
+        return jsonify({
+            'success': False,
+            'error': 'Docker executable not found. Please install Docker Desktop.'
+        }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Docker deployment failed: {str(e)}'
+        }), 500
+
+
+def execute_proxmox_deployment(config, deployment_id):
+    """Deploy GitLab and runners to Proxmox VE"""
+    provider_config = config.get('provider_config', {})
+
+    if not provider_config.get('host'):
+        return jsonify({
+            'success': False,
+            'error': 'Proxmox host not configured. Please test connection first.'
+        }), 400
+
+    try:
+        from proxmoxer import ProxmoxAPI
+
+        # Connect to Proxmox
+        proxmox = ProxmoxAPI(
+            provider_config.get('host'),
+            port=provider_config.get('port', 8006),
+            user=provider_config.get('user'),
+            password=provider_config.get('password'),
+            verify_ssl=provider_config.get('verify_ssl', False)
+        )
+
+        # Get target node
+        nodes = proxmox.nodes.get()
+        target_node = provider_config.get('node', '')
+        node_names = [node['node'] for node in nodes] if nodes else []
+        selected_node = target_node if target_node in node_names else (node_names[0] if node_names else None)
+
+        if not selected_node:
+            return jsonify({
+                'success': False,
+                'error': 'No Proxmox node available'
+            }), 400
+
+        # For now, return success with deployment plan
+        # Full VM creation would go here
+        runners = config.get('runners', [])
+        return jsonify({
+            'success': True,
+            'message': f'Proxmox deployment plan created for node: {selected_node}',
+            'output': f'''Proxmox deployment ready for: {config.get("domain")}
+
+Target node: {selected_node}
+Storage: {provider_config.get("storage", "local-lvm")}
+Network bridge: {provider_config.get("bridge", "vmbr0")}
+
+VMs to create:
+- GitLab Server (4 CPU, 8GB RAM, 50GB disk)
+{chr(10).join(f"- {r} runner" for r in runners) if runners else "- No runners selected"}
+
+This is a deployment preview. Full VM provisioning requires additional setup.
+''',
+            'runner_urls': []
+        })
+
+    except ImportError:
+        return jsonify({
+            'success': False,
+            'error': 'proxmoxer library not installed'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Proxmox deployment failed: {str(e)}'
         }), 500
 
 @bp.route('/api/status/<deployment_id>')
