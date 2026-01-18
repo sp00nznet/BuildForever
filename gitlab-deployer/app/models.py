@@ -45,6 +45,8 @@ def init_db():
                 traefik_enabled INTEGER DEFAULT 0,
                 base_domain TEXT,
                 traefik_dashboard INTEGER DEFAULT 1,
+                proxmox_config TEXT,
+                network_config TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -63,6 +65,16 @@ def init_db():
 
         try:
             cursor.execute('ALTER TABLE saved_configs ADD COLUMN traefik_dashboard INTEGER DEFAULT 1')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN proxmox_config TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN network_config TEXT')
         except sqlite3.OperationalError:
             pass  # Column already exists
 
@@ -116,24 +128,27 @@ class SavedConfig:
 
     @staticmethod
     def create(name, domain, email, admin_password=None, letsencrypt_enabled=True, runners=None,
-               traefik_enabled=False, base_domain=None, traefik_dashboard=True):
+               traefik_enabled=False, base_domain=None, traefik_dashboard=True, proxmox_config=None,
+               network_config=None):
         """Create a new saved configuration"""
         runners_json = json.dumps(runners or [])
+        proxmox_config_json = json.dumps(proxmox_config) if proxmox_config else None
+        network_config_json = json.dumps(network_config) if network_config else None
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO saved_configs (name, domain, email, admin_password, letsencrypt_enabled, runners,
-                                          traefik_enabled, base_domain, traefik_dashboard)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (name, domain, email, admin_password, int(letsencrypt_enabled), runners_json,
-                  int(traefik_enabled), base_domain, int(traefik_dashboard)))
+                  int(traefik_enabled), base_domain, int(traefik_dashboard), proxmox_config_json, network_config_json))
             return cursor.lastrowid
 
     @staticmethod
     def update(config_id, **kwargs):
         """Update an existing configuration"""
         allowed_fields = ['name', 'domain', 'email', 'admin_password', 'letsencrypt_enabled', 'runners',
-                         'traefik_enabled', 'base_domain', 'traefik_dashboard']
+                         'traefik_enabled', 'base_domain', 'traefik_dashboard', 'proxmox_config', 'network_config']
         updates = []
         values = []
 
@@ -142,6 +157,8 @@ class SavedConfig:
                 value = kwargs[field]
                 if field == 'runners':
                     value = json.dumps(value or [])
+                elif field in ('proxmox_config', 'network_config'):
+                    value = json.dumps(value) if value else None
                 elif field in ('letsencrypt_enabled', 'traefik_enabled', 'traefik_dashboard'):
                     value = int(value)
                 updates.append(f'{field} = ?')
@@ -174,12 +191,25 @@ class SavedConfig:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                       traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
+                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
                 FROM saved_configs ORDER BY updated_at DESC
             ''')
             rows = cursor.fetchall()
-            return [
-                {
+            results = []
+            for row in rows:
+                proxmox_cfg = None
+                if 'proxmox_config' in row.keys() and row['proxmox_config']:
+                    try:
+                        proxmox_cfg = json.loads(row['proxmox_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        proxmox_cfg = None
+                network_cfg = None
+                if 'network_config' in row.keys() and row['network_config']:
+                    try:
+                        network_cfg = json.loads(row['network_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        network_cfg = None
+                results.append({
                     'id': row['id'],
                     'name': row['name'],
                     'domain': row['domain'],
@@ -189,11 +219,12 @@ class SavedConfig:
                     'traefik_enabled': bool(row['traefik_enabled']) if row['traefik_enabled'] is not None else False,
                     'base_domain': row['base_domain'] or '',
                     'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
+                    'proxmox_config': proxmox_cfg,
+                    'network_config': network_cfg,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
-                }
-                for row in rows
-            ]
+                })
+            return results
 
     @staticmethod
     def get_by_id(config_id, include_password=False):
@@ -205,11 +236,23 @@ class SavedConfig:
             else:
                 cursor.execute('''
                     SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                           traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
+                           traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
                     FROM saved_configs WHERE id = ?
                 ''', (config_id,))
             row = cursor.fetchone()
             if row:
+                proxmox_cfg = None
+                if 'proxmox_config' in row.keys() and row['proxmox_config']:
+                    try:
+                        proxmox_cfg = json.loads(row['proxmox_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        proxmox_cfg = None
+                network_cfg = None
+                if 'network_config' in row.keys() and row['network_config']:
+                    try:
+                        network_cfg = json.loads(row['network_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        network_cfg = None
                 result = {
                     'id': row['id'],
                     'name': row['name'],
@@ -220,6 +263,8 @@ class SavedConfig:
                     'traefik_enabled': bool(row['traefik_enabled']) if 'traefik_enabled' in row.keys() and row['traefik_enabled'] is not None else False,
                     'base_domain': row['base_domain'] if 'base_domain' in row.keys() else '',
                     'traefik_dashboard': bool(row['traefik_dashboard']) if 'traefik_dashboard' in row.keys() and row['traefik_dashboard'] is not None else True,
+                    'proxmox_config': proxmox_cfg,
+                    'network_config': network_cfg,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
@@ -235,11 +280,23 @@ class SavedConfig:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                       traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
+                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
                 FROM saved_configs WHERE name = ?
             ''', (name,))
             row = cursor.fetchone()
             if row:
+                proxmox_cfg = None
+                if 'proxmox_config' in row.keys() and row['proxmox_config']:
+                    try:
+                        proxmox_cfg = json.loads(row['proxmox_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        proxmox_cfg = None
+                network_cfg = None
+                if 'network_config' in row.keys() and row['network_config']:
+                    try:
+                        network_cfg = json.loads(row['network_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        network_cfg = None
                 return {
                     'id': row['id'],
                     'name': row['name'],
@@ -250,6 +307,8 @@ class SavedConfig:
                     'traefik_enabled': bool(row['traefik_enabled']) if row['traefik_enabled'] is not None else False,
                     'base_domain': row['base_domain'] or '',
                     'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
+                    'proxmox_config': proxmox_cfg,
+                    'network_config': network_cfg,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }

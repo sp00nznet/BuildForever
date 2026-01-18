@@ -876,7 +876,9 @@ def save_config():
             runners=data.get('runners', []),
             traefik_enabled=data.get('traefik_enabled', False),
             base_domain=data.get('base_domain', ''),
-            traefik_dashboard=data.get('traefik_dashboard', True)
+            traefik_dashboard=data.get('traefik_dashboard', True),
+            proxmox_config=data.get('proxmox_config'),
+            network_config=data.get('network_config')
         )
 
         return jsonify({
