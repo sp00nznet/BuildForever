@@ -339,15 +339,14 @@ def execute_proxmox_deployment(config, deployment_id):
         ip_assignments = network_config.get('ip_assignments', {})
 
         def get_ip_config(host_key):
-            """Get IP configuration for a host (returns 'dhcp' or 'ip/cidr,gw=gateway')"""
+            """Get IP configuration for a host (returns 'dhcp' or 'ip/cidr' - without gateway)"""
             if use_dhcp or host_key not in ip_assignments:
                 return 'dhcp'
             ip = ip_assignments[host_key]
             # If IP doesn't have CIDR notation, add /24
             if '/' not in ip:
                 ip = f'{ip}/24'
-            if network_gateway:
-                return f'{ip},gw={network_gateway}'
+            # Note: gateway is passed separately to create_container/create_vm
             return ip
 
         # Track created resources
@@ -523,8 +522,8 @@ def execute_proxmox_deployment(config, deployment_id):
                     runner_ip_config = get_ip_config(runner)
                     runner_static_ip = None
                     if runner_ip_config != 'dhcp':
-                        # Extract IP from config like "192.168.1.10/24,gw=192.168.1.1"
-                        runner_static_ip = runner_ip_config.split(',')[0] if ',' in runner_ip_config else runner_ip_config
+                        # IP config is now just "192.168.1.10/24" (gateway passed separately)
+                        runner_static_ip = runner_ip_config
 
                     # Get credentials for Windows unattended install
                     win_username = deploy_credential['username'] if deploy_credential else 'Admin'
