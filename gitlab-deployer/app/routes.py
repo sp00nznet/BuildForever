@@ -519,8 +519,30 @@ def execute_proxmox_deployment(config, deployment_id):
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
                 elif is_windows:
-                    # Auto-download Windows ISO if not available
-                    iso_result = client.ensure_vm_image(selected_node, 'local', runner)
+                    # Get IP config for Windows runner (DHCP for runners by default)
+                    runner_ip_config = get_ip_config(runner)
+                    runner_static_ip = None
+                    if runner_ip_config != 'dhcp':
+                        # Extract IP from config like "192.168.1.10/24,gw=192.168.1.1"
+                        runner_static_ip = runner_ip_config.split(',')[0] if ',' in runner_ip_config else runner_ip_config
+
+                    # Get credentials for Windows unattended install
+                    win_username = deploy_credential['username'] if deploy_credential else 'Admin'
+                    win_password = deploy_credential.get('password', 'BuildForever!') if deploy_credential else 'BuildForever!'
+
+                    # Create unattended Windows ISO with credentials baked in
+                    iso_result = client.create_unattended_windows_iso(
+                        node=selected_node,
+                        storage='local',
+                        windows_type=runner,
+                        username=win_username,
+                        password=win_password,
+                        gitlab_url=gitlab_url,
+                        runner_token=None,  # Token would come from GitLab API after it's running
+                        static_ip=runner_static_ip,
+                        gateway=network_gateway if runner_static_ip else None,
+                        dns=network_dns
+                    )
                     windows_iso = iso_result.get('iso') if iso_result.get('success') else None
 
                     # Create QEMU VM for Windows
@@ -538,15 +560,11 @@ def execute_proxmox_deployment(config, deployment_id):
                     )
 
                     if result['success']:
-                        iso_status = 'ISO attached' if windows_iso else 'ISO download pending'
-                        # Get IP config for Windows runner
-                        runner_ip_config = get_ip_config(runner)
-                        cred_info = {}
-                        if deploy_credential:
-                            cred_info['credential'] = deploy_credential['name']
-                            cred_info['credential_user'] = deploy_credential['username']
-                            # Generate Windows provisioning script info
-                            cred_info['provisioning_script'] = 'windows'
+                        iso_status = 'unattended ISO attached' if windows_iso else 'ISO creation failed'
+                        cred_info = {
+                            'credential': deploy_credential['name'] if deploy_credential else 'default',
+                            'credential_user': win_username,
+                        }
                         created.append({
                             'vmid': runner_vmid,
                             'name': runner_name,
@@ -559,10 +577,10 @@ def execute_proxmox_deployment(config, deployment_id):
                             **cred_info
                         })
 
-                        # Start VM if ISO is attached
+                        # Start VM - Windows will install automatically
                         if windows_iso:
                             client.start_vm(selected_node, runner_vmid)
-                            created[-1]['status'] = 'started (Windows installation ready)'
+                            created[-1]['status'] = 'started (Windows auto-installing)'
                     else:
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 

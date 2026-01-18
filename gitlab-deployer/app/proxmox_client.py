@@ -618,6 +618,357 @@ class ProxmoxClient:
         return {'success': False, 'error': f'Unknown VM type: {vm_type}'}
 
     # =========================================================================
+    # Windows Unattended Installation (autounattend.xml)
+    # =========================================================================
+
+    def create_unattended_windows_iso(self, node, storage, windows_type, username, password,
+                                       gitlab_url=None, runner_token=None, static_ip=None,
+                                       gateway=None, dns='8.8.8.8', callback=None):
+        """
+        Create a custom Windows ISO with autounattend.xml for fully unattended installation.
+        The ISO will auto-install Windows, create the user account, and optionally install GitLab Runner.
+        """
+        base_iso_name = f'{windows_type}.iso'
+        custom_iso_name = f'{windows_type}-unattended.iso'
+
+        # Check if custom ISO already exists with same config
+        existing_isos = self.get_available_isos(node, storage)
+        for iso in existing_isos:
+            if custom_iso_name in iso.get('volid', ''):
+                # Custom ISO exists - could add hash check for config changes
+                return {'success': True, 'iso': iso['volid'], 'cached': True}
+
+        # First ensure we have the base Windows ISO
+        if callback:
+            callback({'status': 'checking', 'message': f'Checking for base {windows_type} ISO...'})
+
+        base_iso_result = self.get_windows_iso(node, storage, windows_type, callback)
+        if not base_iso_result.get('success'):
+            return base_iso_result
+
+        base_iso_path = base_iso_result.get('iso')
+
+        if callback:
+            callback({'status': 'creating', 'message': 'Creating unattended installation ISO...'})
+
+        # Generate autounattend.xml
+        autounattend_xml = self._get_windows_autounattend_xml(
+            windows_type=windows_type,
+            username=username,
+            password=password,
+            static_ip=static_ip,
+            gateway=gateway,
+            dns=dns
+        )
+
+        # Generate post-install script for GitLab Runner
+        post_install_script = ''
+        if gitlab_url and runner_token:
+            post_install_script = self._get_windows_runner_setup_script(gitlab_url, runner_token)
+
+        # SSH to Proxmox host to create the custom ISO
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.host, username='root', password=self.password, timeout=30)
+
+            # Determine storage path
+            storage_path = f'/var/lib/vz/template/iso'
+
+            # Create working directory
+            work_dir = f'/tmp/win-unattend-{windows_type}-{int(time.time())}'
+
+            # Build the ISO creation script
+            autounattend_b64 = base64.b64encode(autounattend_xml.encode()).decode()
+            post_install_b64 = base64.b64encode(post_install_script.encode()).decode() if post_install_script else ''
+
+            create_iso_script = f'''#!/bin/bash
+set -e
+
+# Install required tools if not present
+which 7z >/dev/null 2>&1 || apt-get install -y p7zip-full
+which genisoimage >/dev/null 2>&1 || apt-get install -y genisoimage
+
+WORK_DIR="{work_dir}"
+BASE_ISO="{storage_path}/{base_iso_name}"
+OUTPUT_ISO="{storage_path}/{custom_iso_name}"
+
+# Create working directory
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
+
+# Extract base ISO
+echo "Extracting base ISO..."
+7z x -y "$BASE_ISO" -o"$WORK_DIR/iso_contents" >/dev/null
+
+# Add autounattend.xml to root
+echo "{autounattend_b64}" | base64 -d > "$WORK_DIR/iso_contents/autounattend.xml"
+
+# Add post-install script if provided
+if [ -n "{post_install_b64}" ]; then
+    mkdir -p "$WORK_DIR/iso_contents/\$OEM\$/\$\$/Setup/Scripts"
+    echo "{post_install_b64}" | base64 -d > "$WORK_DIR/iso_contents/\$OEM\$/\$\$/Setup/Scripts/SetupComplete.cmd"
+fi
+
+# Find boot files for creating bootable ISO
+BOOT_IMG=""
+EFI_IMG=""
+if [ -f "$WORK_DIR/iso_contents/boot/etfsboot.com" ]; then
+    BOOT_IMG="$WORK_DIR/iso_contents/boot/etfsboot.com"
+fi
+if [ -f "$WORK_DIR/iso_contents/efi/microsoft/boot/efisys.bin" ]; then
+    EFI_IMG="$WORK_DIR/iso_contents/efi/microsoft/boot/efisys.bin"
+fi
+
+# Create new bootable ISO
+echo "Creating bootable ISO..."
+cd "$WORK_DIR/iso_contents"
+
+if [ -n "$EFI_IMG" ] && [ -n "$BOOT_IMG" ]; then
+    # UEFI + BIOS bootable
+    genisoimage -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 \
+        -eltorito-alt-boot -e efi/microsoft/boot/efisys.bin -no-emul-boot \
+        -iso-level 4 -UDF -o "$OUTPUT_ISO" . 2>/dev/null
+elif [ -n "$BOOT_IMG" ]; then
+    # BIOS only
+    genisoimage -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 \
+        -iso-level 4 -UDF -o "$OUTPUT_ISO" . 2>/dev/null
+else
+    # Fallback - may not be bootable
+    genisoimage -iso-level 4 -UDF -o "$OUTPUT_ISO" . 2>/dev/null
+fi
+
+# Cleanup
+rm -rf "$WORK_DIR"
+
+echo "SUCCESS: $OUTPUT_ISO"
+'''
+
+            stdin, stdout, stderr = ssh.exec_command(create_iso_script, timeout=600)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode()
+            errors = stderr.read().decode()
+
+            ssh.close()
+
+            if exit_code == 0 and 'SUCCESS:' in output:
+                return {'success': True, 'iso': f'{storage}:iso/{custom_iso_name}'}
+            else:
+                return {'success': False, 'error': errors or output or 'ISO creation failed'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _get_windows_autounattend_xml(self, windows_type, username, password,
+                                       static_ip=None, gateway=None, dns='8.8.8.8'):
+        """Generate autounattend.xml for unattended Windows installation."""
+
+        # Determine Windows image name based on type
+        image_names = {
+            'windows-10': 'Windows 10 Pro',
+            'windows-11': 'Windows 11 Pro',
+            'windows-server-2022': 'Windows Server 2022 SERVERSTANDARD',
+            'windows-server-2025': 'Windows Server 2025 SERVERSTANDARD',
+        }
+        image_name = image_names.get(windows_type, 'Windows 10 Pro')
+
+        # Network configuration
+        if static_ip:
+            ip_parts = static_ip.split('/')[0] if '/' in static_ip else static_ip
+            prefix = static_ip.split('/')[1] if '/' in static_ip else '24'
+            network_config = f'''
+                    <component name="Microsoft-Windows-TCPIP" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                        <Interfaces>
+                            <Interface wcm:action="add">
+                                <Identifier>Ethernet</Identifier>
+                                <Ipv4Settings>
+                                    <DhcpEnabled>false</DhcpEnabled>
+                                </Ipv4Settings>
+                                <UnicastIpAddresses>
+                                    <IpAddress wcm:action="add" wcm:keyValue="1">{ip_parts}/{prefix}</IpAddress>
+                                </UnicastIpAddresses>
+                                <Routes>
+                                    <Route wcm:action="add">
+                                        <Identifier>1</Identifier>
+                                        <NextHopAddress>{gateway or '192.168.1.1'}</NextHopAddress>
+                                        <Prefix>0.0.0.0/0</Prefix>
+                                    </Route>
+                                </Routes>
+                            </Interface>
+                        </Interfaces>
+                    </component>
+                    <component name="Microsoft-Windows-DNS-Client" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+                        <Interfaces>
+                            <Interface wcm:action="add">
+                                <Identifier>Ethernet</Identifier>
+                                <DNSServerSearchOrder>
+                                    <IpAddress wcm:action="add" wcm:keyValue="1">{dns}</IpAddress>
+                                </DNSServerSearchOrder>
+                            </Interface>
+                        </Interfaces>
+                    </component>'''
+        else:
+            network_config = ''
+
+        return f'''<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <settings pass="windowsPE">
+        <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <SetupUILanguage>
+                <UILanguage>en-US</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+        <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <DiskConfiguration>
+                <Disk wcm:action="add">
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>EFI</Type>
+                            <Size>512</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>2</Order>
+                            <Type>MSR</Type>
+                            <Size>128</Size>
+                        </CreatePartition>
+                        <CreatePartition wcm:action="add">
+                            <Order>3</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Format>FAT32</Format>
+                            <Label>System</Label>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>2</Order>
+                            <PartitionID>2</PartitionID>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>3</Order>
+                            <PartitionID>3</PartitionID>
+                            <Format>NTFS</Format>
+                            <Label>Windows</Label>
+                            <Letter>C</Letter>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                    <DiskID>0</DiskID>
+                    <WillWipeDisk>true</WillWipeDisk>
+                </Disk>
+            </DiskConfiguration>
+            <ImageInstall>
+                <OSImage>
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>3</PartitionID>
+                    </InstallTo>
+                    <InstallFrom>
+                        <MetaData wcm:action="add">
+                            <Key>/IMAGE/NAME</Key>
+                            <Value>{image_name}</Value>
+                        </MetaData>
+                    </InstallFrom>
+                </OSImage>
+            </ImageInstall>
+            <UserData>
+                <ProductKey>
+                    <WillShowUI>OnError</WillShowUI>
+                </ProductKey>
+                <AcceptEula>true</AcceptEula>
+            </UserData>
+        </component>
+    </settings>
+    <settings pass="specialize">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <ComputerName>*</ComputerName>
+            <TimeZone>UTC</TimeZone>
+        </component>{network_config}
+    </settings>
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <ProtectYourPC>3</ProtectYourPC>
+                <SkipMachineOOBE>true</SkipMachineOOBE>
+                <SkipUserOOBE>true</SkipUserOOBE>
+            </OOBE>
+            <UserAccounts>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Password>
+                            <Value>{password}</Value>
+                            <PlainText>true</PlainText>
+                        </Password>
+                        <DisplayName>{username}</DisplayName>
+                        <Group>Administrators</Group>
+                        <Name>{username}</Name>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+            <AutoLogon>
+                <Password>
+                    <Value>{password}</Value>
+                    <PlainText>true</PlainText>
+                </Password>
+                <Enabled>true</Enabled>
+                <Username>{username}</Username>
+            </AutoLogon>
+            <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <CommandLine>powershell -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force; Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '*' -Force"</CommandLine>
+                    <Description>Enable PowerShell Remoting</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>2</Order>
+                    <CommandLine>cmd /c if exist C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd call C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd</CommandLine>
+                    <Description>Run SetupComplete script</Description>
+                </SynchronousCommand>
+            </FirstLogonCommands>
+        </component>
+    </settings>
+    <cpi:offlineImage cpi:source="" xmlns:cpi="urn:schemas-microsoft-com:cpi" />
+</unattend>'''
+
+    def _get_windows_runner_setup_script(self, gitlab_url, runner_token):
+        """Generate Windows batch script to install GitLab Runner after Windows setup."""
+        return f'''@echo off
+REM GitLab Runner Installation Script
+REM This runs automatically after Windows installation completes
+
+echo Installing GitLab Runner...
+
+REM Create runner directory
+mkdir C:\\GitLab-Runner 2>nul
+
+REM Download GitLab Runner
+powershell -Command "Invoke-WebRequest -Uri 'https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe' -OutFile 'C:\\GitLab-Runner\\gitlab-runner.exe'"
+
+REM Register the runner
+cd C:\\GitLab-Runner
+gitlab-runner.exe register --non-interactive --url "{gitlab_url}" --registration-token "{runner_token}" --executor "shell" --description "windows-runner" --tag-list "windows,shell" --run-untagged="true" --locked="false"
+
+REM Install as Windows service
+gitlab-runner.exe install
+gitlab-runner.exe start
+
+echo GitLab Runner installation complete!
+'''
+
+    # =========================================================================
     # Container (LXC) Management
     # =========================================================================
 
