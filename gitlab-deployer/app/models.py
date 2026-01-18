@@ -42,10 +42,29 @@ def init_db():
                 admin_password TEXT,
                 letsencrypt_enabled INTEGER DEFAULT 1,
                 runners TEXT,
+                traefik_enabled INTEGER DEFAULT 0,
+                base_domain TEXT,
+                traefik_dashboard INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Add Traefik columns if they don't exist (migration for existing databases)
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN traefik_enabled INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN base_domain TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN traefik_dashboard INTEGER DEFAULT 1')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
         # Deployment history table
         cursor.execute('''
@@ -80,21 +99,25 @@ class SavedConfig:
     """Model for saved deployment configurations"""
 
     @staticmethod
-    def create(name, domain, email, admin_password=None, letsencrypt_enabled=True, runners=None):
+    def create(name, domain, email, admin_password=None, letsencrypt_enabled=True, runners=None,
+               traefik_enabled=False, base_domain=None, traefik_dashboard=True):
         """Create a new saved configuration"""
         runners_json = json.dumps(runners or [])
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO saved_configs (name, domain, email, admin_password, letsencrypt_enabled, runners)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (name, domain, email, admin_password, int(letsencrypt_enabled), runners_json))
+                INSERT INTO saved_configs (name, domain, email, admin_password, letsencrypt_enabled, runners,
+                                          traefik_enabled, base_domain, traefik_dashboard)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (name, domain, email, admin_password, int(letsencrypt_enabled), runners_json,
+                  int(traefik_enabled), base_domain, int(traefik_dashboard)))
             return cursor.lastrowid
 
     @staticmethod
     def update(config_id, **kwargs):
         """Update an existing configuration"""
-        allowed_fields = ['name', 'domain', 'email', 'admin_password', 'letsencrypt_enabled', 'runners']
+        allowed_fields = ['name', 'domain', 'email', 'admin_password', 'letsencrypt_enabled', 'runners',
+                         'traefik_enabled', 'base_domain', 'traefik_dashboard']
         updates = []
         values = []
 
@@ -103,7 +126,7 @@ class SavedConfig:
                 value = kwargs[field]
                 if field == 'runners':
                     value = json.dumps(value or [])
-                elif field == 'letsencrypt_enabled':
+                elif field in ('letsencrypt_enabled', 'traefik_enabled', 'traefik_dashboard'):
                     value = int(value)
                 updates.append(f'{field} = ?')
                 values.append(value)
@@ -134,7 +157,8 @@ class SavedConfig:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                SELECT id, name, domain, email, letsencrypt_enabled, runners,
+                       traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
                 FROM saved_configs ORDER BY updated_at DESC
             ''')
             rows = cursor.fetchall()
@@ -146,6 +170,9 @@ class SavedConfig:
                     'email': row['email'],
                     'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
                     'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'traefik_enabled': bool(row['traefik_enabled']) if row['traefik_enabled'] is not None else False,
+                    'base_domain': row['base_domain'] or '',
+                    'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
@@ -161,7 +188,8 @@ class SavedConfig:
                 cursor.execute('SELECT * FROM saved_configs WHERE id = ?', (config_id,))
             else:
                 cursor.execute('''
-                    SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                    SELECT id, name, domain, email, letsencrypt_enabled, runners,
+                           traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
                     FROM saved_configs WHERE id = ?
                 ''', (config_id,))
             row = cursor.fetchone()
@@ -173,6 +201,9 @@ class SavedConfig:
                     'email': row['email'],
                     'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
                     'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'traefik_enabled': bool(row['traefik_enabled']) if 'traefik_enabled' in row.keys() and row['traefik_enabled'] is not None else False,
+                    'base_domain': row['base_domain'] if 'base_domain' in row.keys() else '',
+                    'traefik_dashboard': bool(row['traefik_dashboard']) if 'traefik_dashboard' in row.keys() and row['traefik_dashboard'] is not None else True,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
@@ -187,7 +218,8 @@ class SavedConfig:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                SELECT id, name, domain, email, letsencrypt_enabled, runners,
+                       traefik_enabled, base_domain, traefik_dashboard, created_at, updated_at
                 FROM saved_configs WHERE name = ?
             ''', (name,))
             row = cursor.fetchone()
@@ -199,6 +231,9 @@ class SavedConfig:
                     'email': row['email'],
                     'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
                     'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'traefik_enabled': bool(row['traefik_enabled']) if row['traefik_enabled'] is not None else False,
+                    'base_domain': row['base_domain'] or '',
+                    'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }

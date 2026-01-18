@@ -557,6 +557,54 @@ footer {
     border-radius: 4px;
 }
 
+/* Conditional Options (Traefik, etc.) */
+.conditional-options {
+    margin-top: 15px;
+    padding: 15px;
+    background: #f8f9fa;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    border-left: 4px solid var(--primary-color);
+}
+
+.conditional-options .form-group {
+    margin-bottom: 15px;
+}
+
+.conditional-options .form-group:last-child {
+    margin-bottom: 0;
+}
+
+/* Checkbox help text */
+.checkbox-help {
+    display: block;
+    margin-left: 26px;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 0.85em;
+}
+
+/* Feature badge */
+.feature-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--primary-color);
+    color: white;
+    font-size: 0.7em;
+    border-radius: 4px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.feature-badge.beta {
+    background: #6c757d;
+}
+
+.feature-badge.new {
+    background: var(--success-color);
+}
+
 @media (max-width: 768px) {
     .container {
         padding: 10px;
@@ -580,5 +628,9 @@ footer {
 
     .runner-actions {
         flex-direction: column;
+    }
+
+    .conditional-options {
+        padding: 10px;
     }
 }

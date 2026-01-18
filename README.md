@@ -17,6 +17,7 @@ BuildForever is a comprehensive deployment tool that creates a complete GitLab C
 - **Saved Configurations**: Save and load deployment configurations for quick repeated deployments
 - **Credential Management**: Securely store and reuse SSH keys and deployment credentials
 - **Docker Support**: Full Docker containerization with docker-compose for easy deployment
+- **Traefik Reverse Proxy**: Optional automatic SSL, load balancing, and service discovery
 - **Automated SSL**: Built-in Let's Encrypt integration with automatic certificate generation and renewal
 - **Infrastructure as Code**: Terraform for consistent infrastructure provisioning
 - **Configuration Management**: Ansible playbooks for platform-specific setup

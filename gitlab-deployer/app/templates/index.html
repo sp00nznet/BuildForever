@@ -64,6 +64,30 @@
                             Enable Let's Encrypt SSL
                         </label>
                     </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="traefik" name="traefik">
+                            Enable Traefik Reverse Proxy
+                        </label>
+                        <small class="checkbox-help">Automatic SSL, load balancing, and service discovery</small>
+                    </div>
+
+                    <!-- Traefik Options (shown when Traefik is enabled) -->
+                    <div id="traefikOptions" class="conditional-options" style="display: none;">
+                        <div class="form-group">
+                            <label for="baseDomain">Base Domain:</label>
+                            <input type="text" id="baseDomain" name="baseDomain" placeholder="example.com">
+                            <small>Base domain for all services (e.g., gitlab.example.com)</small>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="traefikDashboard" name="traefikDashboard" checked>
+                                Enable Traefik Dashboard
+                            </label>
+                            <small class="checkbox-help">Web UI for monitoring at traefik.yourdomain.com</small>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="form-section">

@@ -80,7 +80,11 @@ def deploy():
         'admin_password': data['admin_password'],
         'email': data['email'],
         'letsencrypt_enabled': data.get('letsencrypt_enabled', True),
-        'runners': runners
+        'runners': runners,
+        # Traefik settings
+        'traefik_enabled': data.get('traefik_enabled', False),
+        'base_domain': data.get('base_domain', ''),
+        'traefik_dashboard': data.get('traefik_dashboard', True)
     }
 
     # Save config to file for deployment script
@@ -92,12 +96,19 @@ def deploy():
         json.dump(config, f, indent=2)
 
     # Create deployment plan
-    deployment_steps = [
+    deployment_steps = []
+
+    # Add Traefik deployment step if enabled
+    if config['traefik_enabled']:
+        deployment_steps.append('Deploy Traefik Reverse Proxy')
+        deployment_steps.append('Configure Traefik SSL certificates')
+
+    deployment_steps.extend([
         'Deploy GitLab Server',
-        'Configure SSL with Let\'s Encrypt' if config['letsencrypt_enabled'] else 'Configure GitLab',
+        'Configure SSL with Let\'s Encrypt' if config['letsencrypt_enabled'] and not config['traefik_enabled'] else 'Configure GitLab',
         'Wait for GitLab initialization',
         'Obtain runner registration token'
-    ]
+    ])
 
     for runner_id in runners:
         runner_name = SUPPORTED_RUNNERS[runner_id]['name']
@@ -286,7 +297,10 @@ def save_config():
             email=data.get('email', ''),
             admin_password=data.get('admin_password'),
             letsencrypt_enabled=data.get('letsencrypt_enabled', True),
-            runners=data.get('runners', [])
+            runners=data.get('runners', []),
+            traefik_enabled=data.get('traefik_enabled', False),
+            base_domain=data.get('base_domain', ''),
+            traefik_dashboard=data.get('traefik_dashboard', True)
         )
 
         return jsonify({
