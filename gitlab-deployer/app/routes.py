@@ -323,6 +323,25 @@ def execute_proxmox_deployment(config, deployment_id):
         if credential_id:
             deploy_credential = Credential.get_by_id(credential_id, include_secrets=True)
 
+        # Get network configuration
+        network_config = config.get('network_config', {'use_dhcp': True})
+        use_dhcp = network_config.get('use_dhcp', True)
+        network_gateway = network_config.get('gateway', '')
+        network_dns = network_config.get('dns', '8.8.8.8')
+        ip_assignments = network_config.get('ip_assignments', {})
+
+        def get_ip_config(host_key):
+            """Get IP configuration for a host (returns 'dhcp' or 'ip/cidr,gw=gateway')"""
+            if use_dhcp or host_key not in ip_assignments:
+                return 'dhcp'
+            ip = ip_assignments[host_key]
+            # If IP doesn't have CIDR notation, add /24
+            if '/' not in ip:
+                ip = f'{ip}/24'
+            if network_gateway:
+                return f'{ip},gw={network_gateway}'
+            return ip
+
         # Track created resources
         created = []
         errors = []
@@ -345,6 +364,9 @@ def execute_proxmox_deployment(config, deployment_id):
                 # Download template
                 debian_template = 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst'
 
+            # Get IP config for GitLab
+            gitlab_ip_config = get_ip_config('gitlab')
+
             # Create GitLab container
             result = client.create_container(
                 node=selected_node,
@@ -356,7 +378,8 @@ def execute_proxmox_deployment(config, deployment_id):
                 cores=4,
                 memory=8192,
                 bridge=bridge,
-                ip='dhcp',
+                ip=gitlab_ip_config,
+                gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
                 password='root',
                 start=True
             )
@@ -367,6 +390,7 @@ def execute_proxmox_deployment(config, deployment_id):
                     'name': 'GitLab Server',
                     'type': 'lxc',
                     'status': 'created',
+                    'ip_config': gitlab_ip_config,
                     'resources': '4 CPU, 8GB RAM, 50GB disk'
                 })
 
@@ -426,6 +450,9 @@ def execute_proxmox_deployment(config, deployment_id):
                     template_name = client.CT_TEMPLATES.get(runner)
                     ostemplate = f'local:vztmpl/{template_name}'
 
+                    # Get IP config for this runner
+                    runner_ip_config = get_ip_config(runner)
+
                     result = client.create_container(
                         node=selected_node,
                         vmid=runner_vmid,
@@ -436,7 +463,8 @@ def execute_proxmox_deployment(config, deployment_id):
                         cores=runner_config.get('cores', 2),
                         memory=runner_config.get('memory', 4096),
                         bridge=bridge,
-                        ip='dhcp',
+                        ip=runner_ip_config,
+                        gateway=network_gateway if runner_ip_config != 'dhcp' else None,
                         password='root',
                         start=True
                     )
@@ -448,6 +476,7 @@ def execute_proxmox_deployment(config, deployment_id):
                             'type': 'lxc',
                             'os': runner,
                             'status': 'created',
+                            'ip_config': runner_ip_config,
                             'resources': f'{runner_config.get("cores", 2)} CPU, {runner_config.get("memory", 4096)//1024}GB RAM, {runner_config.get("disk", 40)}GB disk'
                         })
 
@@ -502,6 +531,8 @@ def execute_proxmox_deployment(config, deployment_id):
 
                     if result['success']:
                         iso_status = 'ISO attached' if windows_iso else 'ISO download pending'
+                        # Get IP config for Windows runner
+                        runner_ip_config = get_ip_config(runner)
                         cred_info = {}
                         if deploy_credential:
                             cred_info['credential'] = deploy_credential['name']
@@ -515,6 +546,7 @@ def execute_proxmox_deployment(config, deployment_id):
                             'os': runner,
                             'status': f'created ({iso_status})',
                             'iso': windows_iso,
+                            'ip_config': runner_ip_config,
                             'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk',
                             **cred_info
                         })
@@ -551,6 +583,8 @@ def execute_proxmox_deployment(config, deployment_id):
 
                     if result['success']:
                         iso_status = 'recovery image attached' if macos_iso else 'recovery download pending'
+                        # Get IP config for macOS runner
+                        runner_ip_config = get_ip_config(runner)
                         cred_info = {}
                         if deploy_credential:
                             cred_info['credential'] = deploy_credential['name']
@@ -563,6 +597,7 @@ def execute_proxmox_deployment(config, deployment_id):
                             'os': 'macos',
                             'status': f'created ({iso_status})',
                             'iso': macos_iso,
+                            'ip_config': runner_ip_config,
                             'resources': '4 CPU, 8GB RAM, 80GB disk',
                             'notes': 'Requires Apple hardware per licensing. Uses OSX-PROXMOX configuration.',
                             **cred_info
@@ -586,7 +621,15 @@ def execute_proxmox_deployment(config, deployment_id):
             f'Node: {selected_node}',
             f'Storage: {storage}',
             f'Network: {bridge}',
+            f'IP Mode: {"DHCP" if use_dhcp else "Static"}',
         ]
+
+        # Show network config if using static IPs
+        if not use_dhcp:
+            if network_gateway:
+                output_lines.append(f'Gateway: {network_gateway}')
+            if network_dns:
+                output_lines.append(f'DNS: {network_dns}')
 
         # Show credential info
         if deploy_credential:
@@ -601,7 +644,12 @@ def execute_proxmox_deployment(config, deployment_id):
             output_lines.append('Created Resources:')
             for item in created:
                 ip_str = f' - IP: {item["ip"]}' if item.get('ip') else ''
-                output_lines.append(f'  - {item["type"].upper()} {item["vmid"]}: {item["name"]} ({item["resources"]}){ip_str}')
+                ip_config_str = ''
+                if item.get('ip_config') and item['ip_config'] != 'dhcp':
+                    ip_config_str = f' [Static: {item["ip_config"]}]'
+                elif item.get('ip_config') == 'dhcp':
+                    ip_config_str = ' [DHCP]'
+                output_lines.append(f'  - {item["type"].upper()} {item["vmid"]}: {item["name"]} ({item["resources"]}){ip_str}{ip_config_str}')
                 output_lines.append(f'    Status: {item["status"]}')
                 if item.get('credential'):
                     output_lines.append(f'    Credential: {item["credential"]} ({item.get("credential_user", "")})')

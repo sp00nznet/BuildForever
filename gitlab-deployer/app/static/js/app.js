@@ -87,7 +87,9 @@ document.addEventListener('DOMContentLoaded', function() {
             provider: provider,
             provider_config: getProviderConfig(provider),
             // Credential for VM/container injection
-            credential_id: credentialId ? parseInt(credentialId) : null
+            credential_id: credentialId ? parseInt(credentialId) : null,
+            // Network configuration
+            network_config: getNetworkConfig()
         };
 
         // Show loading status
@@ -1013,4 +1015,112 @@ function setDefaultCredential(credentialId) {
 function downloadCredentialKey(credentialId) {
     window.location.href = `/api/credentials/${credentialId}/download-key`;
 }
+
+// ============================================================================
+// Network/IP Configuration Functions
+// ============================================================================
+
+// Toggle static IP configuration section
+function toggleStaticIpConfig() {
+    const checkbox = document.getElementById('useStaticIps');
+    const configSection = document.getElementById('staticIpConfig');
+
+    if (checkbox && configSection) {
+        configSection.style.display = checkbox.checked ? 'block' : 'none';
+        if (checkbox.checked) {
+            updateIpAssignments();
+        }
+    }
+}
+
+// Update IP assignments list based on selected runners
+function updateIpAssignments() {
+    const container = document.getElementById('ipAssignments');
+    if (!container) return;
+
+    // Start with GitLab server
+    let html = `
+        <div class="ip-assignment-row">
+            <span class="ip-host-name">GitLab Server</span>
+            <input type="text" id="ip-gitlab" placeholder="e.g., 192.168.1.10" class="ip-input">
+        </div>
+    `;
+
+    // Add selected runners
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const displayName = getRunnerDisplayName(runner);
+        html += `
+            <div class="ip-assignment-row">
+                <span class="ip-host-name">${displayName} <span class="runner-type">(${runner})</span></span>
+                <input type="text" id="ip-${runner}" placeholder="e.g., 192.168.1.x" class="ip-input">
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+// Get display name for runner
+function getRunnerDisplayName(runner) {
+    const names = {
+        'windows-10': 'Windows 10 Runner',
+        'windows-11': 'Windows 11 Runner',
+        'windows-server-2022': 'Windows Server 2022',
+        'windows-server-2025': 'Windows Server 2025',
+        'debian': 'Debian Runner',
+        'ubuntu': 'Ubuntu Runner',
+        'arch': 'Arch Linux Runner',
+        'rocky': 'Rocky Linux Runner',
+        'macos': 'macOS Runner'
+    };
+    return names[runner] || runner;
+}
+
+// Collect network configuration
+function getNetworkConfig() {
+    const useStaticIps = document.getElementById('useStaticIps')?.checked || false;
+
+    if (!useStaticIps) {
+        return { use_dhcp: true };
+    }
+
+    const config = {
+        use_dhcp: false,
+        subnet: document.getElementById('networkSubnet')?.value || '',
+        gateway: document.getElementById('networkGateway')?.value || '',
+        dns: document.getElementById('networkDns')?.value || '8.8.8.8',
+        ip_assignments: {}
+    };
+
+    // Get GitLab IP
+    const gitlabIp = document.getElementById('ip-gitlab')?.value?.trim();
+    if (gitlabIp) {
+        config.ip_assignments['gitlab'] = gitlabIp;
+    }
+
+    // Get runner IPs
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const ipInput = document.getElementById(`ip-${runner}`);
+        const ip = ipInput?.value?.trim();
+        if (ip) {
+            config.ip_assignments[runner] = ip;
+        }
+    });
+
+    return config;
+}
+
+// Update IP assignments when runners change
+document.addEventListener('DOMContentLoaded', function() {
+    // Listen for runner checkbox changes to update IP list
+    document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            if (document.getElementById('useStaticIps')?.checked) {
+                updateIpAssignments();
+            }
+        });
+    });
+});
 

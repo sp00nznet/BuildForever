@@ -978,3 +978,93 @@ footer {
         flex-wrap: wrap;
     }
 }
+
+/* ============================================================================
+   Network/IP Configuration Styles
+   ============================================================================ */
+
+.network-config-section h4 {
+    margin-bottom: 15px;
+    color: var(--secondary-color);
+}
+
+.static-ip-config {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 15px;
+}
+
+.form-group.third {
+    flex: 1;
+    min-width: 150px;
+}
+
+.ip-assignments {
+    margin-top: 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.ip-assignment-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 15px;
+    border-bottom: 1px solid var(--border-color);
+    background: white;
+}
+
+.ip-assignment-row:last-child {
+    border-bottom: none;
+}
+
+.ip-assignment-row:nth-child(even) {
+    background: #fafafa;
+}
+
+.ip-host-name {
+    font-weight: 500;
+    min-width: 200px;
+}
+
+.ip-host-name .runner-type {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-left: 5px;
+}
+
+.ip-input {
+    width: 180px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.ip-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.ip-input::placeholder {
+    color: #aaa;
+}
+
+/* Responsive IP config */
+@media (max-width: 600px) {
+    .ip-assignment-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .ip-input {
+        width: 100%;
+    }
+
+    .form-group.third {
+        width: 100%;
+    }
+}

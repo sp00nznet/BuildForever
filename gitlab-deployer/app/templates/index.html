@@ -91,6 +91,45 @@
                             </div>
                         </div>
                         <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
+
+                        <!-- Network Configuration -->
+                        <div class="network-config-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
+                            <h4>Network Configuration</h4>
+                            <div class="form-group checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="useStaticIps" name="useStaticIps" onchange="toggleStaticIpConfig()">
+                                    Configure Static IPs
+                                </label>
+                                <small class="checkbox-help">By default, all VMs/containers use DHCP</small>
+                            </div>
+
+                            <div id="staticIpConfig" class="static-ip-config" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group third">
+                                        <label for="networkSubnet">Network Subnet:</label>
+                                        <input type="text" id="networkSubnet" name="networkSubnet" placeholder="192.168.1.0/24">
+                                    </div>
+                                    <div class="form-group third">
+                                        <label for="networkGateway">Gateway:</label>
+                                        <input type="text" id="networkGateway" name="networkGateway" placeholder="192.168.1.1">
+                                    </div>
+                                    <div class="form-group third">
+                                        <label for="networkDns">DNS Server:</label>
+                                        <input type="text" id="networkDns" name="networkDns" placeholder="8.8.8.8">
+                                    </div>
+                                </div>
+
+                                <div class="ip-assignments" id="ipAssignments">
+                                    <!-- GitLab Server IP -->
+                                    <div class="ip-assignment-row">
+                                        <span class="ip-host-name">GitLab Server</span>
+                                        <input type="text" id="ip-gitlab" placeholder="192.168.1.10" class="ip-input">
+                                    </div>
+                                    <!-- Runner IPs populated dynamically -->
+                                </div>
+                                <small>Leave IP blank to use DHCP for that specific host</small>
+                            </div>
+                        </div>
                     </div>
 
                 </div>
