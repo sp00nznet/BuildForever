@@ -105,6 +105,10 @@ def deploy():
         # Provider settings
         'provider': provider,
         'provider_config': provider_config,
+        # Network settings (static IP configuration)
+        'network_config': data.get('network_config', {'use_dhcp': True}),
+        # Credential for VM/container injection
+        'credential_id': data.get('credential_id'),
         # Traefik settings
         'traefik_enabled': data.get('traefik_enabled', False),
         'base_domain': data.get('base_domain', ''),
@@ -593,7 +597,8 @@ def execute_proxmox_deployment(config, deployment_id):
                         iso=windows_iso,
                         answer_iso=windows_answer_iso,
                         virtio_iso=virtio_iso if virtio_iso else None,
-                        is_windows=True
+                        is_windows=True,
+                        windows_version=runner  # Pass the runner type (windows-10, windows-11, etc.)
                     )
 
                     if result['success']:
