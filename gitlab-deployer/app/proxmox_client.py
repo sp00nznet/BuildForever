@@ -1134,13 +1134,16 @@ echo GitLab Runner installation complete!
             'scsihw': 'virtio-scsi-pci',
             'scsi0': f'{storage}:{disk_size}',
             'ostype': ostype,
-            'boot': 'order=scsi0;ide2',
             'agent': 'enabled=1',
         }
 
-        # ISO attachment
+        # ISO attachment - set boot order based on whether ISO is present
         if iso:
             params['ide2'] = f'{iso},media=cdrom'
+            # Boot from CD-ROM first for installation, then hard drive
+            params['boot'] = 'order=ide2;scsi0'
+        else:
+            params['boot'] = 'order=scsi0'
 
         # macOS-specific configuration
         if is_macos:
