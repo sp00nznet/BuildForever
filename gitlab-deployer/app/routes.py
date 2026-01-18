@@ -424,9 +424,48 @@ def execute_proxmox_deployment(config, deployment_id):
                         'os': runner,
                         'resources': f'{res["cores"]} CPU, {res["memory"]//1024}GB RAM, {res["disk"]}GB disk'
                     })
+                elif runner == 'macos':
+                    # Create QEMU VM for macOS runner with OSX-PROXMOX settings
+                    # AppleSMC OSK key (required for macOS virtualization)
+                    osk = 'ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc'
+
+                    # macOS-specific QEMU args
+                    qemu_args = ' '.join([
+                        '-device isa-applesmc,osk=' + osk,
+                        '-smbios type=2',
+                        '-device usb-kbd,bus=ehci.0,port=2',
+                        '-global nec-usb-xhci.msi=off',
+                        '-global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off',
+                        '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
+                    ])
+
+                    proxmox.nodes(selected_node).qemu.create(
+                        vmid=runner_vmid,
+                        name=runner_name,
+                        memory=8192,
+                        cores=4,
+                        sockets=1,
+                        cpu='host',
+                        net0=f'virtio,bridge={bridge}',
+                        scsihw='virtio-scsi-pci',
+                        scsi0=f'{storage}:80',
+                        ostype='other',
+                        boot='order=scsi0',
+                        bios='ovmf',
+                        machine='q35',
+                        efidisk0=f'{storage}:1',
+                        vga='vmware',
+                        args=qemu_args
+                    )
+                    created_vms.append({
+                        'vmid': runner_vmid,
+                        'name': runner_name,
+                        'type': 'qemu',
+                        'os': 'macos',
+                        'resources': '4 CPU, 8GB RAM, 80GB disk'
+                    })
                 else:
-                    # macOS - not supported on Proxmox
-                    errors.append(f'{runner}: macOS runners not supported on Proxmox')
+                    errors.append(f'{runner}: Unknown runner type')
 
             except Exception as e:
                 errors.append(f'{runner}: {str(e)}')
