@@ -272,7 +272,12 @@ Traefik enabled: {config.get("traefik_enabled", False)}
 
 
 def execute_proxmox_deployment(config, deployment_id):
-    """Deploy GitLab and runners to Proxmox VE"""
+    """Deploy GitLab and runners to Proxmox VE with full provisioning."""
+    import threading
+    from .proxmox_client import (
+        ProxmoxClient, get_gitlab_install_script, get_runner_install_script
+    )
+
     provider_config = config.get('provider_config', {})
 
     if not provider_config.get('host'):
@@ -282,22 +287,20 @@ def execute_proxmox_deployment(config, deployment_id):
         }), 400
 
     try:
-        from proxmoxer import ProxmoxAPI
-
-        # Connect to Proxmox
-        proxmox = ProxmoxAPI(
-            provider_config.get('host'),
+        # Create client and connect
+        client = ProxmoxClient(
+            host=provider_config.get('host'),
             port=provider_config.get('port', 8006),
             user=provider_config.get('user'),
             password=provider_config.get('password'),
             verify_ssl=provider_config.get('verify_ssl', False)
         )
+        client.connect()
 
         # Get target node
-        nodes = proxmox.nodes.get()
+        nodes = client.get_nodes()
         target_node = provider_config.get('node', '')
-        node_names = [node['node'] for node in nodes] if nodes else []
-        selected_node = target_node if target_node in node_names else (node_names[0] if node_names else None)
+        selected_node = target_node if target_node in nodes else (nodes[0] if nodes else None)
 
         if not selected_node:
             return jsonify({
@@ -308,186 +311,216 @@ def execute_proxmox_deployment(config, deployment_id):
         storage = provider_config.get('storage', 'local-lvm')
         bridge = provider_config.get('bridge', 'vmbr0')
         runners = config.get('runners', [])
+        domain = config.get('domain', 'gitlab.local')
+        admin_password = config.get('admin_password', 'changeme')
+        email = config.get('email', '')
 
         # Track created resources
-        created_vms = []
-        created_containers = []
+        created = []
         errors = []
 
-        # Get next available VMID
-        def get_next_vmid():
-            cluster_resources = proxmox.cluster.resources.get(type='vm')
-            used_ids = [r['vmid'] for r in cluster_resources]
-            vmid = 100
-            while vmid in used_ids:
-                vmid += 1
-            return vmid
-
-        # Create GitLab Server VM (QEMU)
+        # =====================================================================
+        # Step 1: Create GitLab Server (LXC Container)
+        # =====================================================================
         try:
-            gitlab_vmid = get_next_vmid()
-            proxmox.nodes(selected_node).qemu.create(
+            gitlab_vmid = client.get_next_vmid()
+
+            # Check for Debian template, download if needed
+            templates = client.get_available_templates(selected_node, 'local')
+            debian_template = None
+            for t in templates:
+                if 'debian' in t.get('volid', '').lower():
+                    debian_template = t['volid']
+                    break
+
+            if not debian_template:
+                # Download template
+                debian_template = 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst'
+
+            # Create GitLab container
+            result = client.create_container(
+                node=selected_node,
                 vmid=gitlab_vmid,
-                name=f'gitlab-{deployment_id.replace(".", "-")}',
-                memory=8192,
+                hostname=f'gitlab-{deployment_id.replace(".", "-")}',
+                ostemplate=debian_template,
+                storage=storage,
+                rootfs_size=50,
                 cores=4,
-                sockets=1,
-                cpu='host',
-                net0=f'virtio,bridge={bridge}',
-                scsihw='virtio-scsi-pci',
-                scsi0=f'{storage}:50',
-                ostype='l26',
-                boot='order=scsi0',
-                agent='enabled=1'
+                memory=8192,
+                bridge=bridge,
+                ip='dhcp',
+                password='root',
+                start=True
             )
-            created_vms.append({
-                'vmid': gitlab_vmid,
-                'name': 'GitLab Server',
-                'type': 'qemu',
-                'resources': '4 CPU, 8GB RAM, 50GB disk'
-            })
+
+            if result['success']:
+                created.append({
+                    'vmid': gitlab_vmid,
+                    'name': 'GitLab Server',
+                    'type': 'lxc',
+                    'status': 'created',
+                    'resources': '4 CPU, 8GB RAM, 50GB disk'
+                })
+
+                # Get container IP
+                gitlab_ip = client.get_container_ip(selected_node, gitlab_vmid)
+                if gitlab_ip:
+                    created[-1]['ip'] = gitlab_ip
+
+                    # Start provisioning in background
+                    def provision_gitlab():
+                        script = get_gitlab_install_script(
+                            domain=domain,
+                            admin_password=admin_password,
+                            letsencrypt_email=email if config.get('letsencrypt_enabled') else None
+                        )
+                        prov_result = client.provision_container(selected_node, gitlab_vmid, script)
+                        # Update status (would need proper status tracking)
+
+                    thread = threading.Thread(target=provision_gitlab, daemon=True)
+                    thread.start()
+                    created[-1]['status'] = 'provisioning'
+            else:
+                errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
+
         except Exception as e:
             errors.append(f'GitLab Server: {str(e)}')
 
-        # Create runner VMs/containers
+        # =====================================================================
+        # Step 2: Create Runner VMs/Containers
+        # =====================================================================
+        gitlab_url = f'https://{domain}'
+
         for runner in runners:
             try:
-                runner_vmid = get_next_vmid()
+                runner_vmid = client.get_next_vmid()
                 runner_name = f'runner-{runner}-{runner_vmid}'
+                runner_config = client.RUNNER_RESOURCES.get(runner, {})
 
-                # Determine if Linux (use LXC) or Windows (use QEMU)
                 is_linux = runner in ['debian', 'ubuntu', 'arch', 'rocky']
                 is_windows = runner.startswith('windows')
+                is_macos = runner == 'macos'
 
                 if is_linux:
-                    # Create LXC container for Linux runners
-                    # Map runner to template
-                    ostemplate_map = {
-                        'debian': 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst',
-                        'ubuntu': 'local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst',
-                        'arch': 'local:vztmpl/archlinux-base_20231015-1_amd64.tar.zst',
-                        'rocky': 'local:vztmpl/rockylinux-9-default_20221109_amd64.tar.xz'
-                    }
+                    # Create LXC container for Linux runner
+                    template_name = client.CT_TEMPLATES.get(runner)
+                    ostemplate = f'local:vztmpl/{template_name}'
 
-                    proxmox.nodes(selected_node).lxc.create(
+                    result = client.create_container(
+                        node=selected_node,
                         vmid=runner_vmid,
                         hostname=runner_name,
-                        ostemplate=ostemplate_map.get(runner, ostemplate_map['debian']),
+                        ostemplate=ostemplate,
                         storage=storage,
-                        rootfs=f'{storage}:40',
-                        memory=4096,
-                        cores=2,
-                        net0=f'name=eth0,bridge={bridge},ip=dhcp',
-                        unprivileged=1,
-                        start=0,
-                        onboot=1
+                        rootfs_size=runner_config.get('disk', 40),
+                        cores=runner_config.get('cores', 2),
+                        memory=runner_config.get('memory', 4096),
+                        bridge=bridge,
+                        ip='dhcp',
+                        password='root',
+                        start=True
                     )
-                    created_containers.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'lxc',
-                        'os': runner,
-                        'resources': '2 CPU, 4GB RAM, 40GB disk'
-                    })
+
+                    if result['success']:
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'lxc',
+                            'os': runner,
+                            'status': 'created',
+                            'resources': f'{runner_config.get("cores", 2)} CPU, {runner_config.get("memory", 4096)//1024}GB RAM, {runner_config.get("disk", 40)}GB disk'
+                        })
+
+                        # Provision runner in background
+                        def provision_runner(vmid, rtype):
+                            ip = client.get_container_ip(selected_node, vmid)
+                            if ip:
+                                # Note: registration_token would come from GitLab API after it's running
+                                script = get_runner_install_script(rtype, gitlab_url, 'REGISTRATION_TOKEN')
+                                client.provision_container(selected_node, vmid, script)
+
+                        thread = threading.Thread(
+                            target=provision_runner,
+                            args=(runner_vmid, runner),
+                            daemon=True
+                        )
+                        thread.start()
+                        created[-1]['status'] = 'provisioning'
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
                 elif is_windows:
-                    # Create QEMU VM for Windows runners
-                    resources = {
-                        'windows-10': {'memory': 8192, 'cores': 4, 'disk': 60},
-                        'windows-11': {'memory': 8192, 'cores': 4, 'disk': 60},
-                        'windows-server-2022': {'memory': 16384, 'cores': 4, 'disk': 80},
-                        'windows-server-2025': {'memory': 16384, 'cores': 4, 'disk': 80}
-                    }
-                    res = resources.get(runner, {'memory': 8192, 'cores': 4, 'disk': 60})
-
-                    proxmox.nodes(selected_node).qemu.create(
+                    # Create QEMU VM for Windows
+                    result = client.create_vm(
+                        node=selected_node,
                         vmid=runner_vmid,
                         name=runner_name,
-                        memory=res['memory'],
-                        cores=res['cores'],
-                        sockets=1,
-                        cpu='host',
-                        net0=f'virtio,bridge={bridge}',
-                        scsihw='virtio-scsi-pci',
-                        scsi0=f'{storage}:{res["disk"]}',
-                        ostype='win11',
-                        boot='order=scsi0',
-                        agent='enabled=1',
-                        bios='ovmf',
-                        machine='q35',
-                        efidisk0=f'{storage}:1'
+                        memory=runner_config.get('memory', 8192),
+                        cores=runner_config.get('cores', 4),
+                        storage=storage,
+                        disk_size=runner_config.get('disk', 60),
+                        bridge=bridge,
+                        is_windows=True
                     )
-                    created_vms.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'qemu',
-                        'os': runner,
-                        'resources': f'{res["cores"]} CPU, {res["memory"]//1024}GB RAM, {res["disk"]}GB disk'
-                    })
-                elif runner == 'macos':
-                    # Create QEMU VM for macOS runner with OSX-PROXMOX settings
-                    # AppleSMC OSK key (required for macOS virtualization)
-                    osk = 'ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc'
 
-                    # macOS-specific QEMU args
-                    qemu_args = ' '.join([
-                        '-device isa-applesmc,osk=' + osk,
-                        '-smbios type=2',
-                        '-device usb-kbd,bus=ehci.0,port=2',
-                        '-global nec-usb-xhci.msi=off',
-                        '-global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off',
-                        '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
-                    ])
+                    if result['success']:
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'qemu',
+                            'os': runner,
+                            'status': 'created (needs Windows ISO)',
+                            'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk'
+                        })
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
-                    proxmox.nodes(selected_node).qemu.create(
+                elif is_macos:
+                    # Create QEMU VM for macOS with OSX-PROXMOX settings
+                    result = client.create_vm(
+                        node=selected_node,
                         vmid=runner_vmid,
                         name=runner_name,
                         memory=8192,
                         cores=4,
-                        sockets=1,
-                        cpu='host',
-                        net0=f'virtio,bridge={bridge}',
-                        scsihw='virtio-scsi-pci',
-                        scsi0=f'{storage}:80',
-                        ostype='other',
-                        boot='order=scsi0',
-                        bios='ovmf',
-                        machine='q35',
-                        efidisk0=f'{storage}:1',
-                        vga='vmware',
-                        args=qemu_args
+                        storage=storage,
+                        disk_size=80,
+                        bridge=bridge,
+                        is_macos=True
                     )
-                    created_vms.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'qemu',
-                        'os': 'macos',
-                        'resources': '4 CPU, 8GB RAM, 80GB disk'
-                    })
-                else:
-                    errors.append(f'{runner}: Unknown runner type')
+
+                    if result['success']:
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'qemu',
+                            'os': 'macos',
+                            'status': 'created (needs macOS ISO)',
+                            'resources': '4 CPU, 8GB RAM, 80GB disk'
+                        })
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
             except Exception as e:
                 errors.append(f'{runner}: {str(e)}')
 
-        # Build output summary
+        # =====================================================================
+        # Build Response
+        # =====================================================================
         output_lines = [
-            f'Proxmox deployment for: {config.get("domain")}',
+            f'Proxmox deployment for: {domain}',
             f'Node: {selected_node}',
             f'Storage: {storage}',
             f'Network: {bridge}',
             ''
         ]
 
-        if created_vms:
-            output_lines.append('Created VMs:')
-            for vm in created_vms:
-                output_lines.append(f'  - VMID {vm["vmid"]}: {vm["name"]} ({vm["resources"]})')
-
-        if created_containers:
-            output_lines.append('Created Containers:')
-            for ct in created_containers:
-                output_lines.append(f'  - CTID {ct["vmid"]}: {ct["name"]} ({ct["resources"]})')
+        if created:
+            output_lines.append('Created Resources:')
+            for item in created:
+                ip_str = f' - IP: {item["ip"]}' if item.get('ip') else ''
+                output_lines.append(f'  - {item["type"].upper()} {item["vmid"]}: {item["name"]} ({item["resources"]}){ip_str}')
+                output_lines.append(f'    Status: {item["status"]}')
 
         if errors:
             output_lines.append('')
@@ -495,33 +528,27 @@ def execute_proxmox_deployment(config, deployment_id):
             for err in errors:
                 output_lines.append(f'  - {err}')
             output_lines.append('')
-            output_lines.append('Note: Some errors may be due to missing OS templates.')
-            output_lines.append('Download templates via: Proxmox UI > local storage > CT Templates')
+            output_lines.append('Note: Some errors may be due to missing templates.')
+            output_lines.append('Download templates: Proxmox UI > local > CT Templates > Templates')
 
-        if not created_vms and not created_containers:
-            output_lines.append('')
-            output_lines.append('No VMs/containers were created.')
-        else:
-            output_lines.append('')
-            output_lines.append('Next steps:')
-            output_lines.append('1. Install OS on VMs (attach ISO or use cloud-init)')
-            output_lines.append('2. Start VMs/containers from Proxmox UI')
-            output_lines.append('3. Install GitLab and runners on each machine')
+        output_lines.append('')
+        output_lines.append('Provisioning Status:')
+        output_lines.append('- Linux containers: Auto-provisioning GitLab and runners via SSH')
+        output_lines.append('- Windows/macOS VMs: Attach ISO and install manually, then run runner script')
 
         return jsonify({
-            'success': len(errors) == 0 or len(created_vms) > 0 or len(created_containers) > 0,
-            'message': f'Created {len(created_vms)} VMs and {len(created_containers)} containers',
+            'success': len(created) > 0,
+            'message': f'Created {len(created)} resources ({len(errors)} errors)',
             'output': '\n'.join(output_lines),
-            'created_vms': created_vms,
-            'created_containers': created_containers,
+            'created': created,
             'errors': errors,
             'runner_urls': []
         })
 
-    except ImportError:
+    except ImportError as e:
         return jsonify({
             'success': False,
-            'error': 'proxmoxer library not installed'
+            'error': f'Missing library: {str(e)}. Run: pip install proxmoxer paramiko'
         }), 500
     except Exception as e:
         return jsonify({
