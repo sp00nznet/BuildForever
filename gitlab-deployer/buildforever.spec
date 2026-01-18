@@ -61,6 +61,15 @@ hiddenimports = [
     'proxmoxer.core',
     'proxmoxer.backends',
     'proxmoxer.backends.https',
+
+    # SSH for container provisioning
+    'paramiko',
+    'paramiko.ssh_exception',
+    'paramiko.transport',
+    'paramiko.channel',
+
+    # Application - Proxmox client
+    'app.proxmox_client',
 ]
 
 # Data files to include

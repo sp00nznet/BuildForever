@@ -772,3 +772,299 @@ footer {
         font-size: 1.1em;
     }
 }
+
+/* ============================================================================
+   Credential Management Styles
+   ============================================================================ */
+
+.credentials-section .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.credentials-section .section-header h2 {
+    margin-bottom: 0;
+}
+
+.credentials-list {
+    margin-top: 15px;
+}
+
+.credentials-list .empty-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    text-align: center;
+    padding: 20px;
+}
+
+.credential-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background: #fafafa;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.credential-item.default {
+    border-color: var(--primary-color);
+    background: #fff8f5;
+}
+
+.credential-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 200px;
+}
+
+.credential-user {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.credential-auth {
+    display: flex;
+    gap: 5px;
+}
+
+.auth-badge {
+    font-size: 0.75em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.auth-badge.password {
+    background: #e8f4fd;
+    color: #1a73e8;
+}
+
+.auth-badge.ssh {
+    background: #e8f5e9;
+    color: #1b5e20;
+}
+
+.credential-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.badge {
+    font-size: 0.7em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.default-badge {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-tiny {
+    padding: 4px 8px;
+    font-size: 0.8em;
+}
+
+.btn-danger {
+    background: var(--error-color);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #c0251a;
+}
+
+/* Credential Modal Tabs */
+.credential-tabs {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.tab-btn {
+    padding: 8px 16px;
+    border: none;
+    background: #f0f0f0;
+    border-radius: 5px 5px 0 0;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background: #e0e0e0;
+}
+
+.tab-btn.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.credential-tab-content {
+    animation: fadeIn 0.2s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Textarea for keys */
+.form-group textarea {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid var(--border-color);
+    border-radius: 5px;
+    font-size: 0.9em;
+    font-family: 'Consolas', 'Monaco', monospace;
+    resize: vertical;
+    min-height: 80px;
+}
+
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+/* File upload styling */
+.form-group input[type="file"] {
+    padding: 10px;
+    border: 2px dashed var(--border-color);
+    border-radius: 5px;
+    width: 100%;
+    cursor: pointer;
+    background: #fafafa;
+}
+
+.form-group input[type="file"]:hover {
+    border-color: var(--primary-color);
+    background: #fff8f5;
+}
+
+.info-text {
+    background: #e8f4fd;
+    color: #1a73e8;
+    padding: 10px 15px;
+    border-radius: 5px;
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+/* Responsive credential styles */
+@media (max-width: 600px) {
+    .credential-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .credential-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .credential-tabs {
+        flex-wrap: wrap;
+    }
+}
+
+/* ============================================================================
+   Network/IP Configuration Styles
+   ============================================================================ */
+
+.network-config-section h4 {
+    margin-bottom: 15px;
+    color: var(--secondary-color);
+}
+
+.static-ip-config {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 15px;
+}
+
+.form-group.third {
+    flex: 1;
+    min-width: 150px;
+}
+
+.ip-assignments {
+    margin-top: 15px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.ip-assignment-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 15px;
+    border-bottom: 1px solid var(--border-color);
+    background: white;
+}
+
+.ip-assignment-row:last-child {
+    border-bottom: none;
+}
+
+.ip-assignment-row:nth-child(even) {
+    background: #fafafa;
+}
+
+.ip-host-name {
+    font-weight: 500;
+    min-width: 200px;
+}
+
+.ip-host-name .runner-type {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-left: 5px;
+}
+
+.ip-input {
+    width: 180px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.ip-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.ip-input::placeholder {
+    color: #aaa;
+}
+
+/* Responsive IP config */
+@media (max-width: 600px) {
+    .ip-assignment-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .ip-input {
+        width: 100%;
+    }
+
+    .form-group.third {
+        width: 100%;
+    }
+}

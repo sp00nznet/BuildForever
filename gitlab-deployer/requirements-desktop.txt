@@ -14,6 +14,7 @@ pywebview>=4.4.0
 
 # Infrastructure providers (for testing connections)
 proxmoxer>=2.0.1
+paramiko>=3.4.0
 
 # These dependencies are supplementary to the base requirements.txt
 # and are specifically needed to build the standalone Windows executable.

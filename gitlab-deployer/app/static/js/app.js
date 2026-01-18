@@ -69,6 +69,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // Get selected provider
         const provider = document.getElementById('provider')?.value || 'docker';
 
+        // Get selected credential
+        const credentialId = document.getElementById('deployCredential')?.value || '';
+
         // Collect form data
         const deploymentData = {
             domain: document.getElementById('domain').value,
@@ -82,7 +85,11 @@ document.addEventListener('DOMContentLoaded', function() {
             traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
             // Infrastructure provider
             provider: provider,
-            provider_config: getProviderConfig(provider)
+            provider_config: getProviderConfig(provider),
+            // Credential for VM/container injection
+            credential_id: credentialId ? parseInt(credentialId) : null,
+            // Network configuration
+            network_config: getNetworkConfig()
         };
 
         // Show loading status
@@ -731,4 +738,389 @@ function testProxmoxConnection() {
         hideNodeCapacity();
     });
 }
+
+// ============================================================================
+// Credential Management Functions
+// ============================================================================
+
+// Current credential tab
+let currentCredentialTab = 'manual';
+
+// Load credentials on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadCredentials();
+});
+
+// Load saved credentials
+function loadCredentials() {
+    fetch('/api/credentials')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateCredentialDropdown(data.credentials);
+                updateCredentialsList(data.credentials);
+            }
+        })
+        .catch(error => {
+            console.error('Failed to load credentials:', error);
+        });
+}
+
+// Update the credential dropdown
+function updateCredentialDropdown(credentials) {
+    const select = document.getElementById('deployCredential');
+    if (!select) return;
+
+    // Clear and rebuild
+    select.innerHTML = '<option value="">-- No credential (use defaults) --</option>';
+
+    credentials.forEach(cred => {
+        const option = document.createElement('option');
+        option.value = cred.id;
+        option.textContent = `${cred.name} (${cred.username})`;
+        if (cred.is_default) {
+            option.textContent += ' [Default]';
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
+// Update the credentials list display
+function updateCredentialsList(credentials) {
+    const list = document.getElementById('credentialsList');
+    if (!list) return;
+
+    if (credentials.length === 0) {
+        list.innerHTML = '<p class="empty-message">No credentials saved. Add one to inject into VMs/containers.</p>';
+        return;
+    }
+
+    list.innerHTML = credentials.map(cred => `
+        <div class="credential-item ${cred.is_default ? 'default' : ''}">
+            <div class="credential-info">
+                <strong>${cred.name}</strong>
+                <span class="credential-user">@${cred.username}</span>
+                ${cred.is_default ? '<span class="badge default-badge">Default</span>' : ''}
+            </div>
+            <div class="credential-auth">
+                ${cred.has_password ? '<span class="auth-badge password">Password</span>' : ''}
+                ${cred.has_ssh_key ? '<span class="auth-badge ssh">SSH Key</span>' : ''}
+            </div>
+            <div class="credential-actions">
+                ${!cred.is_default ? `<button type="button" class="btn btn-tiny btn-secondary" onclick="setDefaultCredential(${cred.id})">Set Default</button>` : ''}
+                ${cred.has_ssh_key ? `<button type="button" class="btn btn-tiny btn-secondary" onclick="downloadCredentialKey(${cred.id})">Download Key</button>` : ''}
+                <button type="button" class="btn btn-tiny btn-danger" onclick="deleteCredential(${cred.id})">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Toggle credential modal
+function toggleCredentialModal() {
+    const modal = document.getElementById('credentialModal');
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'flex';
+        resetCredentialForm();
+        document.getElementById('credentialName').focus();
+    } else {
+        modal.style.display = 'none';
+    }
+}
+
+// Reset credential form
+function resetCredentialForm() {
+    document.getElementById('credentialForm').reset();
+    document.getElementById('credentialId').value = '';
+    document.getElementById('credentialModalTitle').textContent = 'Add Credential';
+    showCredentialTab('manual');
+}
+
+// Show credential tab
+function showCredentialTab(tab) {
+    currentCredentialTab = tab;
+
+    // Update tab buttons
+    document.querySelectorAll('.credential-tabs .tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`.credential-tabs .tab-btn[onclick="showCredentialTab('${tab}')"]`).classList.add('active');
+
+    // Update tab content
+    document.querySelectorAll('.credential-tab-content').forEach(content => {
+        content.style.display = 'none';
+    });
+    document.getElementById('credentialTab' + tab.charAt(0).toUpperCase() + tab.slice(1)).style.display = 'block';
+}
+
+// Save credential
+function saveCredential() {
+    const name = document.getElementById('credentialName').value.trim();
+    const username = document.getElementById('credentialUsername').value.trim();
+
+    if (!name || !username) {
+        alert('Please enter a name and username');
+        return;
+    }
+
+    let saveData = {
+        name: name,
+        username: username,
+        is_default: document.getElementById('credentialDefault').checked
+    };
+
+    // Handle based on current tab
+    if (currentCredentialTab === 'manual') {
+        saveData.password = document.getElementById('credentialPassword').value;
+        saveData.ssh_public_key = document.getElementById('credentialPublicKey').value.trim();
+        saveData.ssh_private_key = document.getElementById('credentialPrivateKey').value.trim();
+
+        if (!saveData.password && !saveData.ssh_public_key) {
+            alert('Please enter either a password or SSH public key');
+            return;
+        }
+
+        saveCredentialData(saveData);
+    } else if (currentCredentialTab === 'upload') {
+        // Use FormData for file upload
+        const formData = new FormData();
+        formData.append('name', name);
+        formData.append('username', username);
+        formData.append('password', document.getElementById('credentialPasswordUpload').value);
+        formData.append('is_default', document.getElementById('credentialDefault').checked);
+
+        const publicKeyFile = document.getElementById('publicKeyFile').files[0];
+        const privateKeyFile = document.getElementById('privateKeyFile').files[0];
+
+        if (publicKeyFile) {
+            formData.append('public_key', publicKeyFile);
+        }
+        if (privateKeyFile) {
+            formData.append('private_key', privateKeyFile);
+        }
+
+        if (!document.getElementById('credentialPasswordUpload').value && !publicKeyFile) {
+            alert('Please enter a password or upload a public key');
+            return;
+        }
+
+        fetch('/api/credentials/upload-key', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                toggleCredentialModal();
+                loadCredentials();
+                showStatus('success', 'Credential saved successfully');
+            } else {
+                alert(data.error || 'Failed to save credential');
+            }
+        })
+        .catch(error => {
+            alert('Failed to save credential: ' + error.message);
+        });
+    } else if (currentCredentialTab === 'generate') {
+        saveData.password = document.getElementById('credentialPasswordGenerate').value;
+        saveData.key_type = document.getElementById('keyType').value;
+        saveData.ssh_key_passphrase = document.getElementById('keyPassphrase').value;
+
+        fetch('/api/credentials/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(saveData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                toggleCredentialModal();
+                loadCredentials();
+                showStatus('success', 'Credential with SSH keypair generated successfully');
+            } else {
+                alert(data.error || 'Failed to generate credential');
+            }
+        })
+        .catch(error => {
+            alert('Failed to generate credential: ' + error.message);
+        });
+    }
+}
+
+// Save credential data (for manual entry)
+function saveCredentialData(data) {
+    fetch('/api/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            toggleCredentialModal();
+            loadCredentials();
+            showStatus('success', 'Credential saved successfully');
+        } else {
+            alert(result.error || 'Failed to save credential');
+        }
+    })
+    .catch(error => {
+        alert('Failed to save credential: ' + error.message);
+    });
+}
+
+// Delete credential
+function deleteCredential(credentialId) {
+    if (!confirm('Are you sure you want to delete this credential?')) {
+        return;
+    }
+
+    fetch(`/api/credentials/${credentialId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadCredentials();
+            showStatus('success', 'Credential deleted');
+        } else {
+            alert(data.error || 'Failed to delete credential');
+        }
+    })
+    .catch(error => {
+        alert('Failed to delete credential: ' + error.message);
+    });
+}
+
+// Set default credential
+function setDefaultCredential(credentialId) {
+    fetch(`/api/credentials/${credentialId}/set-default`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadCredentials();
+            showStatus('success', 'Default credential updated');
+        } else {
+            alert(data.error || 'Failed to set default credential');
+        }
+    })
+    .catch(error => {
+        alert('Failed to set default: ' + error.message);
+    });
+}
+
+// Download credential private key
+function downloadCredentialKey(credentialId) {
+    window.location.href = `/api/credentials/${credentialId}/download-key`;
+}
+
+// ============================================================================
+// Network/IP Configuration Functions
+// ============================================================================
+
+// Toggle static IP configuration section
+function toggleStaticIpConfig() {
+    const checkbox = document.getElementById('useStaticIps');
+    const configSection = document.getElementById('staticIpConfig');
+
+    if (checkbox && configSection) {
+        configSection.style.display = checkbox.checked ? 'block' : 'none';
+        if (checkbox.checked) {
+            updateIpAssignments();
+        }
+    }
+}
+
+// Update IP assignments list based on selected runners
+function updateIpAssignments() {
+    const container = document.getElementById('ipAssignments');
+    if (!container) return;
+
+    // Start with GitLab server
+    let html = `
+        <div class="ip-assignment-row">
+            <span class="ip-host-name">GitLab Server</span>
+            <input type="text" id="ip-gitlab" placeholder="e.g., 192.168.1.10" class="ip-input">
+        </div>
+    `;
+
+    // Add selected runners
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const displayName = getRunnerDisplayName(runner);
+        html += `
+            <div class="ip-assignment-row">
+                <span class="ip-host-name">${displayName} <span class="runner-type">(${runner})</span></span>
+                <input type="text" id="ip-${runner}" placeholder="e.g., 192.168.1.x" class="ip-input">
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+// Get display name for runner
+function getRunnerDisplayName(runner) {
+    const names = {
+        'windows-10': 'Windows 10 Runner',
+        'windows-11': 'Windows 11 Runner',
+        'windows-server-2022': 'Windows Server 2022',
+        'windows-server-2025': 'Windows Server 2025',
+        'debian': 'Debian Runner',
+        'ubuntu': 'Ubuntu Runner',
+        'arch': 'Arch Linux Runner',
+        'rocky': 'Rocky Linux Runner',
+        'macos': 'macOS Runner'
+    };
+    return names[runner] || runner;
+}
+
+// Collect network configuration
+function getNetworkConfig() {
+    const useStaticIps = document.getElementById('useStaticIps')?.checked || false;
+
+    if (!useStaticIps) {
+        return { use_dhcp: true };
+    }
+
+    const config = {
+        use_dhcp: false,
+        subnet: document.getElementById('networkSubnet')?.value || '',
+        gateway: document.getElementById('networkGateway')?.value || '',
+        dns: document.getElementById('networkDns')?.value || '8.8.8.8',
+        ip_assignments: {}
+    };
+
+    // Get GitLab IP
+    const gitlabIp = document.getElementById('ip-gitlab')?.value?.trim();
+    if (gitlabIp) {
+        config.ip_assignments['gitlab'] = gitlabIp;
+    }
+
+    // Get runner IPs
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        const runner = checkbox.value;
+        const ipInput = document.getElementById(`ip-${runner}`);
+        const ip = ipInput?.value?.trim();
+        if (ip) {
+            config.ip_assignments[runner] = ip;
+        }
+    });
+
+    return config;
+}
+
+// Update IP assignments when runners change
+document.addEventListener('DOMContentLoaded', function() {
+    // Listen for runner checkbox changes to update IP list
+    document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            if (document.getElementById('useStaticIps')?.checked) {
+                updateIpAssignments();
+            }
+        });
+    });
+});
 

@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 from functools import wraps
-from .models import SavedConfig, DeploymentHistory, SSHKey, init_db
+from .models import SavedConfig, DeploymentHistory, SSHKey, Credential, init_db
 
 bp = Blueprint('main', __name__)
 
@@ -272,7 +272,14 @@ Traefik enabled: {config.get("traefik_enabled", False)}
 
 
 def execute_proxmox_deployment(config, deployment_id):
-    """Deploy GitLab and runners to Proxmox VE"""
+    """Deploy GitLab and runners to Proxmox VE with full provisioning."""
+    import threading
+    from .proxmox_client import (
+        ProxmoxClient, get_gitlab_install_script, get_runner_install_script,
+        get_linux_credential_script, get_windows_credential_script,
+        get_windows_ssh_key_script, get_macos_credential_script
+    )
+
     provider_config = config.get('provider_config', {})
 
     if not provider_config.get('host'):
@@ -282,22 +289,20 @@ def execute_proxmox_deployment(config, deployment_id):
         }), 400
 
     try:
-        from proxmoxer import ProxmoxAPI
-
-        # Connect to Proxmox
-        proxmox = ProxmoxAPI(
-            provider_config.get('host'),
+        # Create client and connect
+        client = ProxmoxClient(
+            host=provider_config.get('host'),
             port=provider_config.get('port', 8006),
             user=provider_config.get('user'),
             password=provider_config.get('password'),
             verify_ssl=provider_config.get('verify_ssl', False)
         )
+        client.connect()
 
         # Get target node
-        nodes = proxmox.nodes.get()
+        nodes = client.get_nodes()
         target_node = provider_config.get('node', '')
-        node_names = [node['node'] for node in nodes] if nodes else []
-        selected_node = target_node if target_node in node_names else (node_names[0] if node_names else None)
+        selected_node = target_node if target_node in nodes else (nodes[0] if nodes else None)
 
         if not selected_node:
             return jsonify({
@@ -308,186 +313,346 @@ def execute_proxmox_deployment(config, deployment_id):
         storage = provider_config.get('storage', 'local-lvm')
         bridge = provider_config.get('bridge', 'vmbr0')
         runners = config.get('runners', [])
+        domain = config.get('domain', 'gitlab.local')
+        admin_password = config.get('admin_password', 'changeme')
+        email = config.get('email', '')
+
+        # Get deployment credential if specified
+        deploy_credential = None
+        credential_id = config.get('credential_id')
+        if credential_id:
+            deploy_credential = Credential.get_by_id(credential_id, include_secrets=True)
+
+        # Get network configuration
+        network_config = config.get('network_config', {'use_dhcp': True})
+        use_dhcp = network_config.get('use_dhcp', True)
+        network_gateway = network_config.get('gateway', '')
+        network_dns = network_config.get('dns', '8.8.8.8')
+        ip_assignments = network_config.get('ip_assignments', {})
+
+        def get_ip_config(host_key):
+            """Get IP configuration for a host (returns 'dhcp' or 'ip/cidr,gw=gateway')"""
+            if use_dhcp or host_key not in ip_assignments:
+                return 'dhcp'
+            ip = ip_assignments[host_key]
+            # If IP doesn't have CIDR notation, add /24
+            if '/' not in ip:
+                ip = f'{ip}/24'
+            if network_gateway:
+                return f'{ip},gw={network_gateway}'
+            return ip
 
         # Track created resources
-        created_vms = []
-        created_containers = []
+        created = []
         errors = []
 
-        # Get next available VMID
-        def get_next_vmid():
-            cluster_resources = proxmox.cluster.resources.get(type='vm')
-            used_ids = [r['vmid'] for r in cluster_resources]
-            vmid = 100
-            while vmid in used_ids:
-                vmid += 1
-            return vmid
-
-        # Create GitLab Server VM (QEMU)
+        # =====================================================================
+        # Step 1: Create GitLab Server (LXC Container)
+        # =====================================================================
         try:
-            gitlab_vmid = get_next_vmid()
-            proxmox.nodes(selected_node).qemu.create(
+            gitlab_vmid = client.get_next_vmid()
+
+            # Check for Debian template, download if needed
+            templates = client.get_available_templates(selected_node, 'local')
+            debian_template = None
+            for t in templates:
+                if 'debian' in t.get('volid', '').lower():
+                    debian_template = t['volid']
+                    break
+
+            if not debian_template:
+                # Download template
+                debian_template = 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst'
+
+            # Get IP config for GitLab
+            gitlab_ip_config = get_ip_config('gitlab')
+
+            # Create GitLab container
+            result = client.create_container(
+                node=selected_node,
                 vmid=gitlab_vmid,
-                name=f'gitlab-{deployment_id.replace(".", "-")}',
-                memory=8192,
+                hostname=f'gitlab-{deployment_id.replace(".", "-")}',
+                ostemplate=debian_template,
+                storage=storage,
+                rootfs_size=50,
                 cores=4,
-                sockets=1,
-                cpu='host',
-                net0=f'virtio,bridge={bridge}',
-                scsihw='virtio-scsi-pci',
-                scsi0=f'{storage}:50',
-                ostype='l26',
-                boot='order=scsi0',
-                agent='enabled=1'
+                memory=8192,
+                bridge=bridge,
+                ip=gitlab_ip_config,
+                gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
+                password='root',
+                start=True
             )
-            created_vms.append({
-                'vmid': gitlab_vmid,
-                'name': 'GitLab Server',
-                'type': 'qemu',
-                'resources': '4 CPU, 8GB RAM, 50GB disk'
-            })
+
+            if result['success']:
+                created.append({
+                    'vmid': gitlab_vmid,
+                    'name': 'GitLab Server',
+                    'type': 'lxc',
+                    'status': 'created',
+                    'ip_config': gitlab_ip_config,
+                    'resources': '4 CPU, 8GB RAM, 50GB disk'
+                })
+
+                # Get container IP
+                gitlab_ip = client.get_container_ip(selected_node, gitlab_vmid)
+                if gitlab_ip:
+                    created[-1]['ip'] = gitlab_ip
+
+                    # Start provisioning in background
+                    def provision_gitlab():
+                        # First inject credentials if specified
+                        if deploy_credential:
+                            cred_script = get_linux_credential_script(
+                                username=deploy_credential['username'],
+                                password=deploy_credential.get('password'),
+                                ssh_public_key=deploy_credential.get('ssh_public_key')
+                            )
+                            client.provision_container(selected_node, gitlab_vmid, cred_script)
+
+                        # Then install GitLab
+                        script = get_gitlab_install_script(
+                            domain=domain,
+                            admin_password=admin_password,
+                            letsencrypt_email=email if config.get('letsencrypt_enabled') else None
+                        )
+                        prov_result = client.provision_container(selected_node, gitlab_vmid, script)
+                        # Update status (would need proper status tracking)
+
+                    thread = threading.Thread(target=provision_gitlab, daemon=True)
+                    thread.start()
+                    created[-1]['status'] = 'provisioning'
+                    if deploy_credential:
+                        created[-1]['credential'] = deploy_credential['name']
+            else:
+                errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
+
         except Exception as e:
             errors.append(f'GitLab Server: {str(e)}')
 
-        # Create runner VMs/containers
+        # =====================================================================
+        # Step 2: Create Runner VMs/Containers
+        # =====================================================================
+        gitlab_url = f'https://{domain}'
+
         for runner in runners:
             try:
-                runner_vmid = get_next_vmid()
+                runner_vmid = client.get_next_vmid()
                 runner_name = f'runner-{runner}-{runner_vmid}'
+                runner_config = client.RUNNER_RESOURCES.get(runner, {})
 
-                # Determine if Linux (use LXC) or Windows (use QEMU)
                 is_linux = runner in ['debian', 'ubuntu', 'arch', 'rocky']
                 is_windows = runner.startswith('windows')
+                is_macos = runner == 'macos'
 
                 if is_linux:
-                    # Create LXC container for Linux runners
-                    # Map runner to template
-                    ostemplate_map = {
-                        'debian': 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst',
-                        'ubuntu': 'local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst',
-                        'arch': 'local:vztmpl/archlinux-base_20231015-1_amd64.tar.zst',
-                        'rocky': 'local:vztmpl/rockylinux-9-default_20221109_amd64.tar.xz'
-                    }
+                    # Create LXC container for Linux runner
+                    template_name = client.CT_TEMPLATES.get(runner)
+                    ostemplate = f'local:vztmpl/{template_name}'
 
-                    proxmox.nodes(selected_node).lxc.create(
+                    # Get IP config for this runner
+                    runner_ip_config = get_ip_config(runner)
+
+                    result = client.create_container(
+                        node=selected_node,
                         vmid=runner_vmid,
                         hostname=runner_name,
-                        ostemplate=ostemplate_map.get(runner, ostemplate_map['debian']),
+                        ostemplate=ostemplate,
                         storage=storage,
-                        rootfs=f'{storage}:40',
-                        memory=4096,
-                        cores=2,
-                        net0=f'name=eth0,bridge={bridge},ip=dhcp',
-                        unprivileged=1,
-                        start=0,
-                        onboot=1
+                        rootfs_size=runner_config.get('disk', 40),
+                        cores=runner_config.get('cores', 2),
+                        memory=runner_config.get('memory', 4096),
+                        bridge=bridge,
+                        ip=runner_ip_config,
+                        gateway=network_gateway if runner_ip_config != 'dhcp' else None,
+                        password='root',
+                        start=True
                     )
-                    created_containers.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'lxc',
-                        'os': runner,
-                        'resources': '2 CPU, 4GB RAM, 40GB disk'
-                    })
+
+                    if result['success']:
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'lxc',
+                            'os': runner,
+                            'status': 'created',
+                            'ip_config': runner_ip_config,
+                            'resources': f'{runner_config.get("cores", 2)} CPU, {runner_config.get("memory", 4096)//1024}GB RAM, {runner_config.get("disk", 40)}GB disk'
+                        })
+
+                        # Provision runner in background
+                        def provision_runner(vmid, rtype, cred):
+                            ip = client.get_container_ip(selected_node, vmid)
+                            if ip:
+                                # First inject credentials if specified
+                                if cred:
+                                    cred_script = get_linux_credential_script(
+                                        username=cred['username'],
+                                        password=cred.get('password'),
+                                        ssh_public_key=cred.get('ssh_public_key')
+                                    )
+                                    client.provision_container(selected_node, vmid, cred_script)
+
+                                # Then install runner
+                                # Note: registration_token would come from GitLab API after it's running
+                                script = get_runner_install_script(rtype, gitlab_url, 'REGISTRATION_TOKEN')
+                                client.provision_container(selected_node, vmid, script)
+
+                        thread = threading.Thread(
+                            target=provision_runner,
+                            args=(runner_vmid, runner, deploy_credential),
+                            daemon=True
+                        )
+                        thread.start()
+                        created[-1]['status'] = 'provisioning'
+                        if deploy_credential:
+                            created[-1]['credential'] = deploy_credential['name']
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
                 elif is_windows:
-                    # Create QEMU VM for Windows runners
-                    resources = {
-                        'windows-10': {'memory': 8192, 'cores': 4, 'disk': 60},
-                        'windows-11': {'memory': 8192, 'cores': 4, 'disk': 60},
-                        'windows-server-2022': {'memory': 16384, 'cores': 4, 'disk': 80},
-                        'windows-server-2025': {'memory': 16384, 'cores': 4, 'disk': 80}
-                    }
-                    res = resources.get(runner, {'memory': 8192, 'cores': 4, 'disk': 60})
+                    # Auto-download Windows ISO if not available
+                    iso_result = client.ensure_vm_image(selected_node, 'local', runner)
+                    windows_iso = iso_result.get('iso') if iso_result.get('success') else None
 
-                    proxmox.nodes(selected_node).qemu.create(
+                    # Create QEMU VM for Windows
+                    result = client.create_vm(
+                        node=selected_node,
                         vmid=runner_vmid,
                         name=runner_name,
-                        memory=res['memory'],
-                        cores=res['cores'],
-                        sockets=1,
-                        cpu='host',
-                        net0=f'virtio,bridge={bridge}',
-                        scsihw='virtio-scsi-pci',
-                        scsi0=f'{storage}:{res["disk"]}',
-                        ostype='win11',
-                        boot='order=scsi0',
-                        agent='enabled=1',
-                        bios='ovmf',
-                        machine='q35',
-                        efidisk0=f'{storage}:1'
+                        memory=runner_config.get('memory', 8192),
+                        cores=runner_config.get('cores', 4),
+                        storage=storage,
+                        disk_size=runner_config.get('disk', 60),
+                        bridge=bridge,
+                        iso=windows_iso,
+                        is_windows=True
                     )
-                    created_vms.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'qemu',
-                        'os': runner,
-                        'resources': f'{res["cores"]} CPU, {res["memory"]//1024}GB RAM, {res["disk"]}GB disk'
-                    })
-                elif runner == 'macos':
-                    # Create QEMU VM for macOS runner with OSX-PROXMOX settings
-                    # AppleSMC OSK key (required for macOS virtualization)
-                    osk = 'ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc'
 
-                    # macOS-specific QEMU args
-                    qemu_args = ' '.join([
-                        '-device isa-applesmc,osk=' + osk,
-                        '-smbios type=2',
-                        '-device usb-kbd,bus=ehci.0,port=2',
-                        '-global nec-usb-xhci.msi=off',
-                        '-global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off',
-                        '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
-                    ])
+                    if result['success']:
+                        iso_status = 'ISO attached' if windows_iso else 'ISO download pending'
+                        # Get IP config for Windows runner
+                        runner_ip_config = get_ip_config(runner)
+                        cred_info = {}
+                        if deploy_credential:
+                            cred_info['credential'] = deploy_credential['name']
+                            cred_info['credential_user'] = deploy_credential['username']
+                            # Generate Windows provisioning script info
+                            cred_info['provisioning_script'] = 'windows'
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'qemu',
+                            'os': runner,
+                            'status': f'created ({iso_status})',
+                            'iso': windows_iso,
+                            'ip_config': runner_ip_config,
+                            'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk',
+                            **cred_info
+                        })
 
-                    proxmox.nodes(selected_node).qemu.create(
+                        # Start VM if ISO is attached
+                        if windows_iso:
+                            client.start_vm(selected_node, runner_vmid)
+                            created[-1]['status'] = 'started (Windows installation ready)'
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
+
+                elif is_macos:
+                    # Auto-download macOS recovery image from Apple servers
+                    recovery_result = client.get_macos_recovery(selected_node, 'local', 'sonoma')
+                    macos_iso = recovery_result.get('iso') if recovery_result.get('success') else None
+
+                    # Prepare OpenCore bootloader
+                    if macos_iso:
+                        client.prepare_macos_opencore(selected_node, 'local', 'sonoma')
+
+                    # Create QEMU VM for macOS with OSX-PROXMOX settings
+                    result = client.create_vm(
+                        node=selected_node,
                         vmid=runner_vmid,
                         name=runner_name,
                         memory=8192,
                         cores=4,
-                        sockets=1,
-                        cpu='host',
-                        net0=f'virtio,bridge={bridge}',
-                        scsihw='virtio-scsi-pci',
-                        scsi0=f'{storage}:80',
-                        ostype='other',
-                        boot='order=scsi0',
-                        bios='ovmf',
-                        machine='q35',
-                        efidisk0=f'{storage}:1',
-                        vga='vmware',
-                        args=qemu_args
+                        storage=storage,
+                        disk_size=80,
+                        bridge=bridge,
+                        iso=macos_iso,
+                        is_macos=True
                     )
-                    created_vms.append({
-                        'vmid': runner_vmid,
-                        'name': runner_name,
-                        'type': 'qemu',
-                        'os': 'macos',
-                        'resources': '4 CPU, 8GB RAM, 80GB disk'
-                    })
-                else:
-                    errors.append(f'{runner}: Unknown runner type')
+
+                    if result['success']:
+                        iso_status = 'recovery image attached' if macos_iso else 'recovery download pending'
+                        # Get IP config for macOS runner
+                        runner_ip_config = get_ip_config(runner)
+                        cred_info = {}
+                        if deploy_credential:
+                            cred_info['credential'] = deploy_credential['name']
+                            cred_info['credential_user'] = deploy_credential['username']
+                            cred_info['provisioning_script'] = 'macos'
+                        created.append({
+                            'vmid': runner_vmid,
+                            'name': runner_name,
+                            'type': 'qemu',
+                            'os': 'macos',
+                            'status': f'created ({iso_status})',
+                            'iso': macos_iso,
+                            'ip_config': runner_ip_config,
+                            'resources': '4 CPU, 8GB RAM, 80GB disk',
+                            'notes': 'Requires Apple hardware per licensing. Uses OSX-PROXMOX configuration.',
+                            **cred_info
+                        })
+
+                        # Start VM if recovery image is attached
+                        if macos_iso:
+                            client.start_vm(selected_node, runner_vmid)
+                            created[-1]['status'] = 'started (macOS installation ready)'
+                    else:
+                        errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
             except Exception as e:
                 errors.append(f'{runner}: {str(e)}')
 
-        # Build output summary
+        # =====================================================================
+        # Build Response
+        # =====================================================================
         output_lines = [
-            f'Proxmox deployment for: {config.get("domain")}',
+            f'Proxmox deployment for: {domain}',
             f'Node: {selected_node}',
             f'Storage: {storage}',
             f'Network: {bridge}',
-            ''
+            f'IP Mode: {"DHCP" if use_dhcp else "Static"}',
         ]
 
-        if created_vms:
-            output_lines.append('Created VMs:')
-            for vm in created_vms:
-                output_lines.append(f'  - VMID {vm["vmid"]}: {vm["name"]} ({vm["resources"]})')
+        # Show network config if using static IPs
+        if not use_dhcp:
+            if network_gateway:
+                output_lines.append(f'Gateway: {network_gateway}')
+            if network_dns:
+                output_lines.append(f'DNS: {network_dns}')
 
-        if created_containers:
-            output_lines.append('Created Containers:')
-            for ct in created_containers:
-                output_lines.append(f'  - CTID {ct["vmid"]}: {ct["name"]} ({ct["resources"]})')
+        # Show credential info
+        if deploy_credential:
+            output_lines.append(f'Credential: {deploy_credential["name"]} (user: {deploy_credential["username"]})')
+            if deploy_credential.get('ssh_public_key'):
+                output_lines.append('  - SSH key will be added to authorized_keys')
+            if deploy_credential.get('password'):
+                output_lines.append('  - Password will be set for login')
+        output_lines.append('')
+
+        if created:
+            output_lines.append('Created Resources:')
+            for item in created:
+                ip_str = f' - IP: {item["ip"]}' if item.get('ip') else ''
+                ip_config_str = ''
+                if item.get('ip_config') and item['ip_config'] != 'dhcp':
+                    ip_config_str = f' [Static: {item["ip_config"]}]'
+                elif item.get('ip_config') == 'dhcp':
+                    ip_config_str = ' [DHCP]'
+                output_lines.append(f'  - {item["type"].upper()} {item["vmid"]}: {item["name"]} ({item["resources"]}){ip_str}{ip_config_str}')
+                output_lines.append(f'    Status: {item["status"]}')
+                if item.get('credential'):
+                    output_lines.append(f'    Credential: {item["credential"]} ({item.get("credential_user", "")})')
 
         if errors:
             output_lines.append('')
@@ -495,33 +660,27 @@ def execute_proxmox_deployment(config, deployment_id):
             for err in errors:
                 output_lines.append(f'  - {err}')
             output_lines.append('')
-            output_lines.append('Note: Some errors may be due to missing OS templates.')
-            output_lines.append('Download templates via: Proxmox UI > local storage > CT Templates')
+            output_lines.append('Note: Some errors may be due to missing templates.')
+            output_lines.append('Download templates: Proxmox UI > local > CT Templates > Templates')
 
-        if not created_vms and not created_containers:
-            output_lines.append('')
-            output_lines.append('No VMs/containers were created.')
-        else:
-            output_lines.append('')
-            output_lines.append('Next steps:')
-            output_lines.append('1. Install OS on VMs (attach ISO or use cloud-init)')
-            output_lines.append('2. Start VMs/containers from Proxmox UI')
-            output_lines.append('3. Install GitLab and runners on each machine')
+        output_lines.append('')
+        output_lines.append('Provisioning Status:')
+        output_lines.append('- Linux containers: Auto-provisioning GitLab and runners via SSH')
+        output_lines.append('- Windows/macOS VMs: Attach ISO and install manually, then run runner script')
 
         return jsonify({
-            'success': len(errors) == 0 or len(created_vms) > 0 or len(created_containers) > 0,
-            'message': f'Created {len(created_vms)} VMs and {len(created_containers)} containers',
+            'success': len(created) > 0,
+            'message': f'Created {len(created)} resources ({len(errors)} errors)',
             'output': '\n'.join(output_lines),
-            'created_vms': created_vms,
-            'created_containers': created_containers,
+            'created': created,
             'errors': errors,
             'runner_urls': []
         })
 
-    except ImportError:
+    except ImportError as e:
         return jsonify({
             'success': False,
-            'error': 'proxmoxer library not installed'
+            'error': f'Missing library: {str(e)}. Run: pip install proxmoxer paramiko'
         }), 500
     except Exception as e:
         return jsonify({
@@ -1000,6 +1159,323 @@ def test_proxmox_connection(config):
             'success': False,
             'error': f'Connection failed: {str(e)}'
         }), 400
+
+
+# ============================================================================
+# Credentials API - Unified credential management for Windows/Linux/macOS
+# ============================================================================
+
+@bp.route('/api/credentials', methods=['GET'])
+def get_credentials():
+    """Get all saved credentials (without secrets)"""
+    try:
+        credentials = Credential.get_all(include_secrets=False)
+        return jsonify({
+            'success': True,
+            'credentials': credentials
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials', methods=['POST'])
+def create_credential():
+    """Create a new credential"""
+    data = request.json
+
+    if not data.get('name') or not data.get('username'):
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    # Must have at least password or SSH key
+    if not data.get('password') and not data.get('ssh_public_key'):
+        return jsonify({
+            'success': False,
+            'error': 'Either password or SSH public key is required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(data['name'])
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': 'A credential with this name already exists'
+            }), 400
+
+        credential_id = Credential.create(
+            name=data['name'],
+            username=data['username'],
+            password=data.get('password'),
+            ssh_public_key=data.get('ssh_public_key'),
+            ssh_private_key=data.get('ssh_private_key'),
+            ssh_key_passphrase=data.get('ssh_key_passphrase'),
+            is_default=data.get('is_default', False)
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential created successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['GET'])
+def get_credential(credential_id):
+    """Get a specific credential"""
+    try:
+        include_secrets = request.args.get('include_secrets', 'false').lower() == 'true'
+        credential = Credential.get_by_id(credential_id, include_secrets=include_secrets)
+
+        if credential:
+            return jsonify({
+                'success': True,
+                'credential': credential
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['PUT'])
+def update_credential(credential_id):
+    """Update an existing credential"""
+    data = request.json
+
+    try:
+        success = Credential.update(credential_id, **data)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Credential updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found or no changes made'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['DELETE'])
+def delete_credential(credential_id):
+    """Delete a credential"""
+    try:
+        success = Credential.delete(credential_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Credential deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>/set-default', methods=['POST'])
+def set_default_credential(credential_id):
+    """Set a credential as the default"""
+    try:
+        success = Credential.set_default(credential_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Default credential updated'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/generate', methods=['POST'])
+def generate_credential():
+    """Generate a new credential with SSH keypair"""
+    data = request.json
+
+    if not data.get('name') or not data.get('username'):
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(data['name'])
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': 'A credential with this name already exists'
+            }), 400
+
+        credential_id = Credential.generate_ssh_keypair(
+            name=data['name'],
+            username=data['username'],
+            password=data.get('password'),
+            key_type=data.get('key_type', 'ed25519'),
+            passphrase=data.get('ssh_key_passphrase')
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential with SSH keypair generated successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/upload-key', methods=['POST'])
+def upload_credential_key():
+    """Upload SSH key files to create or update a credential"""
+    name = request.form.get('name')
+    username = request.form.get('username')
+    password = request.form.get('password')
+    is_default = request.form.get('is_default', 'false').lower() == 'true'
+
+    if not name or not username:
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    ssh_public_key = None
+    ssh_private_key = None
+
+    # Handle public key upload
+    if 'public_key' in request.files:
+        public_key_file = request.files['public_key']
+        if public_key_file.filename:
+            ssh_public_key = public_key_file.read().decode('utf-8').strip()
+
+    # Handle private key upload
+    if 'private_key' in request.files:
+        private_key_file = request.files['private_key']
+        if private_key_file.filename:
+            ssh_private_key = private_key_file.read().decode('utf-8').strip()
+
+    # Handle pasted public key
+    if not ssh_public_key and request.form.get('ssh_public_key'):
+        ssh_public_key = request.form.get('ssh_public_key').strip()
+
+    # Handle pasted private key
+    if not ssh_private_key and request.form.get('ssh_private_key'):
+        ssh_private_key = request.form.get('ssh_private_key').strip()
+
+    # Must have at least password or SSH key
+    if not password and not ssh_public_key:
+        return jsonify({
+            'success': False,
+            'error': 'Either password or SSH public key is required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(name)
+        if existing:
+            # Update existing credential
+            Credential.update(
+                existing['id'],
+                username=username,
+                password=password,
+                ssh_public_key=ssh_public_key,
+                ssh_private_key=ssh_private_key,
+                is_default=is_default
+            )
+            return jsonify({
+                'success': True,
+                'message': 'Credential updated successfully',
+                'credential_id': existing['id']
+            })
+
+        # Create new credential
+        credential_id = Credential.create(
+            name=name,
+            username=username,
+            password=password,
+            ssh_public_key=ssh_public_key,
+            ssh_private_key=ssh_private_key,
+            is_default=is_default
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential created successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>/download-key', methods=['GET'])
+def download_credential_key(credential_id):
+    """Download the SSH private key for a credential"""
+    try:
+        credential = Credential.get_by_id(credential_id, include_secrets=True)
+        if not credential:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+
+        if not credential.get('ssh_private_key'):
+            return jsonify({
+                'success': False,
+                'error': 'This credential does not have an SSH private key'
+            }), 400
+
+        from flask import Response
+        response = Response(
+            credential['ssh_private_key'],
+            mimetype='application/x-pem-file'
+        )
+        response.headers['Content-Disposition'] = f'attachment; filename={credential["name"]}_id_key'
+        return response
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @bp.route('/api/providers')
