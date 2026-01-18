@@ -568,7 +568,9 @@ def execute_proxmox_deployment(config, deployment_id):
                             windows_answer_iso = answer_result.get('answer_iso')
                             iso_source = 'user-selected+autounattend'
                     else:
-                        # Try to create unattended Windows ISO with credentials baked in
+                        # No ISO selected - try to create unattended Windows ISO with credentials baked in
+                        # This requires 7z and other tools on the Proxmox host
+                        print(f"[DEBUG] No ISO selected for {runner}, attempting to create unattended ISO...")
                         iso_result = client.create_unattended_windows_iso(
                             node=selected_node,
                             storage=iso_storage,
@@ -581,8 +583,13 @@ def execute_proxmox_deployment(config, deployment_id):
                             gateway=network_gateway if runner_static_ip else None,
                             dns=network_dns
                         )
-                        windows_iso = iso_result.get('iso') if iso_result.get('success') else None
-                        iso_source = 'auto-created' if windows_iso else 'failed'
+                        if iso_result.get('success'):
+                            windows_iso = iso_result.get('iso')
+                            iso_source = 'auto-created'
+                        else:
+                            windows_iso = None
+                            iso_source = 'no-iso-selected'
+                            print(f"[WARNING] No ISO selected for {runner} and auto-creation failed: {iso_result.get('error', 'Unknown error')}")
 
                     # Create QEMU VM for Windows
                     result = client.create_vm(
@@ -606,9 +613,11 @@ def execute_proxmox_deployment(config, deployment_id):
                         if iso_source == 'user-selected+autounattend':
                             iso_status = 'user ISO + autounattend attached'
                         elif iso_source == 'user-selected':
-                            iso_status = 'user ISO attached (manual install)'
+                            iso_status = 'user ISO attached (manual install required)'
                         elif iso_source == 'auto-created':
                             iso_status = 'unattended ISO attached'
+                        elif iso_source == 'no-iso-selected':
+                            iso_status = 'NO ISO - select Windows ISO in Proxmox settings!'
                         else:
                             iso_status = 'ISO creation failed'
 

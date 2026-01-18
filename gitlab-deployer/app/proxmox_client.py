@@ -789,12 +789,18 @@ echo "SUCCESS: $OUTPUT_ISO"
             # Base64 encode the XML
             autounattend_b64 = base64.b64encode(autounattend_xml.encode()).decode()
 
-            # Create ISO script using genisoimage/mkisofs
+            # Create ISO script using genisoimage/mkisofs (auto-install if needed)
             create_iso_script = f'''#!/bin/bash
 set -e
 
 ISO_PATH="{storage_path}/{iso_name}"
 WORK_DIR=$(mktemp -d)
+
+# Install genisoimage if not present (Debian/Proxmox)
+if ! command -v genisoimage &> /dev/null && ! command -v mkisofs &> /dev/null; then
+    echo "Installing genisoimage..."
+    apt-get update -qq && apt-get install -y -qq genisoimage >/dev/null 2>&1
+fi
 
 # Write autounattend.xml to temp directory
 echo "{autounattend_b64}" | base64 -d > "$WORK_DIR/autounattend.xml"
@@ -805,7 +811,7 @@ if command -v genisoimage &> /dev/null; then
 elif command -v mkisofs &> /dev/null; then
     mkisofs -o "$ISO_PATH" -V "AUTOUNATTEND" -J -r "$WORK_DIR" 2>/dev/null
 else
-    echo "ERROR: Neither genisoimage nor mkisofs found"
+    echo "ERROR: Failed to install or find ISO creation tools"
     exit 1
 fi
 
