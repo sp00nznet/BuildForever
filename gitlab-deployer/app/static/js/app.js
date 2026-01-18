@@ -66,11 +66,17 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedRunners.push(checkbox.value);
         });
 
-        // Get selected provider
-        const provider = document.getElementById('provider')?.value || 'docker';
-
         // Get selected credential
         const credentialId = document.getElementById('deployCredential')?.value || '';
+
+        // Get Proxmox configuration
+        const providerConfig = getProviderConfig();
+
+        // Validate Proxmox connection is configured
+        if (!providerConfig.host || !providerConfig.user || !providerConfig.password) {
+            showStatus('error', 'Please configure Proxmox connection and test it first');
+            return;
+        }
 
         // Collect form data
         const deploymentData = {
@@ -83,9 +89,9 @@ document.addEventListener('DOMContentLoaded', function() {
             traefik_enabled: document.getElementById('traefik').checked,
             base_domain: document.getElementById('baseDomain')?.value || '',
             traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
-            // Infrastructure provider
-            provider: provider,
-            provider_config: getProviderConfig(provider),
+            // Infrastructure provider - always Proxmox
+            provider: 'proxmox',
+            provider_config: providerConfig,
             // Credential for VM/container injection
             credential_id: credentialId ? parseInt(credentialId) : null,
             // Network configuration
@@ -495,12 +501,18 @@ function loadSavedConfig() {
                     document.getElementById('traefikDashboard').checked = config.traefik_dashboard !== false;
                 }
 
+                // Restore Proxmox settings
+                if (config.proxmox_config) {
+                    setProviderConfig(config.proxmox_config);
+                }
+
                 // Set runner checkboxes
                 document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
                     checkbox.checked = config.runners && config.runners.includes(checkbox.value);
                 });
 
                 updateSelectedCount();
+                updateResourceTotals();
                 showStatus('info', `Loaded configuration: ${config.name}`);
             } else {
                 showStatus('error', data.error || 'Failed to load configuration');
@@ -545,6 +557,20 @@ function saveCurrentConfig() {
         selectedRunners.push(checkbox.value);
     });
 
+    // Get Proxmox config (without password for security)
+    const proxmoxConfig = getProviderConfig();
+    const proxmoxConfigToSave = {
+        host: proxmoxConfig.host,
+        port: proxmoxConfig.port,
+        node: proxmoxConfig.node,
+        user: proxmoxConfig.user,
+        verify_ssl: proxmoxConfig.verify_ssl,
+        storage: proxmoxConfig.storage,
+        iso_storage: proxmoxConfig.iso_storage,
+        bridge: proxmoxConfig.bridge,
+        windows_isos: proxmoxConfig.windows_isos
+    };
+
     const config = {
         name: name,
         domain: domain,
@@ -554,12 +580,16 @@ function saveCurrentConfig() {
         // Traefik settings
         traefik_enabled: document.getElementById('traefik')?.checked || false,
         base_domain: document.getElementById('baseDomain')?.value || '',
-        traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false
+        traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
+        // Proxmox settings
+        proxmox_config: proxmoxConfigToSave
     };
 
     // Include password if checkbox is checked
     if (document.getElementById('savePassword').checked) {
         config.admin_password = document.getElementById('adminPassword').value;
+        // Also save Proxmox password
+        config.proxmox_config.password = proxmoxConfig.password;
     }
 
     fetch('/api/configs', {
@@ -665,48 +695,54 @@ function toggleProviderOptions() {
     }
 }
 
-// Get provider-specific configuration
-function getProviderConfig(provider) {
-    switch (provider) {
-        case 'proxmox':
-            return {
-                host: document.getElementById('proxmoxHost')?.value || '',
-                port: parseInt(document.getElementById('proxmoxPort')?.value) || 8006,
-                node: document.getElementById('proxmoxNode')?.value || 'pve',
-                user: document.getElementById('proxmoxUser')?.value || '',
-                password: document.getElementById('proxmoxPassword')?.value || '',
-                verify_ssl: document.getElementById('proxmoxVerifySSL')?.checked || false,
-                storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
-                bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0',
-                windows_iso: document.getElementById('windowsIsoSelect')?.value || ''
-            };
-        case 'docker':
-        default:
-            return {};
-    }
+// Get Proxmox configuration
+function getProviderConfig() {
+    return {
+        host: document.getElementById('proxmoxHost')?.value || '',
+        port: parseInt(document.getElementById('proxmoxPort')?.value) || 8006,
+        node: document.getElementById('proxmoxNode')?.value || 'pve',
+        user: document.getElementById('proxmoxUser')?.value || '',
+        password: document.getElementById('proxmoxPassword')?.value || '',
+        verify_ssl: document.getElementById('proxmoxVerifySSL')?.checked || false,
+        storage: document.getElementById('proxmoxStorage')?.value || 'local-lvm',
+        iso_storage: document.getElementById('proxmoxIsoStorage')?.value || 'local',
+        bridge: document.getElementById('proxmoxBridge')?.value || 'vmbr0',
+        // Individual Windows ISOs for each version
+        windows_isos: {
+            'windows-10': document.getElementById('isoWindows10')?.value || '',
+            'windows-11': document.getElementById('isoWindows11')?.value || '',
+            'windows-server-2022': document.getElementById('isoWindowsServer2022')?.value || '',
+            'windows-server-2025': document.getElementById('isoWindowsServer2025')?.value || ''
+        }
+    };
 }
 
-// Set provider configuration in form
-function setProviderConfig(provider, config) {
+// Set Proxmox configuration in form
+function setProviderConfig(config) {
     if (!config) return;
 
-    switch (provider) {
-        case 'proxmox':
-            if (document.getElementById('proxmoxHost')) document.getElementById('proxmoxHost').value = config.host || '';
-            if (document.getElementById('proxmoxPort')) document.getElementById('proxmoxPort').value = config.port || 8006;
-            if (document.getElementById('proxmoxNode')) document.getElementById('proxmoxNode').value = config.node || '';
-            if (document.getElementById('proxmoxUser')) document.getElementById('proxmoxUser').value = config.user || '';
-            if (document.getElementById('proxmoxPassword')) document.getElementById('proxmoxPassword').value = config.password || '';
-            if (document.getElementById('proxmoxVerifySSL')) document.getElementById('proxmoxVerifySSL').checked = config.verify_ssl || false;
-            if (document.getElementById('proxmoxStorage')) document.getElementById('proxmoxStorage').value = config.storage || '';
-            if (document.getElementById('proxmoxBridge')) document.getElementById('proxmoxBridge').value = config.bridge || '';
-            break;
+    if (document.getElementById('proxmoxHost')) document.getElementById('proxmoxHost').value = config.host || '';
+    if (document.getElementById('proxmoxPort')) document.getElementById('proxmoxPort').value = config.port || 8006;
+    if (document.getElementById('proxmoxNode')) document.getElementById('proxmoxNode').value = config.node || '';
+    if (document.getElementById('proxmoxUser')) document.getElementById('proxmoxUser').value = config.user || '';
+    if (document.getElementById('proxmoxPassword')) document.getElementById('proxmoxPassword').value = config.password || '';
+    if (document.getElementById('proxmoxVerifySSL')) document.getElementById('proxmoxVerifySSL').checked = config.verify_ssl || false;
+    if (document.getElementById('proxmoxStorage')) document.getElementById('proxmoxStorage').value = config.storage || '';
+    if (document.getElementById('proxmoxIsoStorage')) document.getElementById('proxmoxIsoStorage').value = config.iso_storage || 'local';
+    if (document.getElementById('proxmoxBridge')) document.getElementById('proxmoxBridge').value = config.bridge || '';
+
+    // Set Windows ISOs if available
+    if (config.windows_isos) {
+        if (document.getElementById('isoWindows10')) document.getElementById('isoWindows10').value = config.windows_isos['windows-10'] || '';
+        if (document.getElementById('isoWindows11')) document.getElementById('isoWindows11').value = config.windows_isos['windows-11'] || '';
+        if (document.getElementById('isoWindowsServer2022')) document.getElementById('isoWindowsServer2022').value = config.windows_isos['windows-server-2022'] || '';
+        if (document.getElementById('isoWindowsServer2025')) document.getElementById('isoWindowsServer2025').value = config.windows_isos['windows-server-2025'] || '';
     }
 }
 
 // Test Proxmox connection
 function testProxmoxConnection() {
-    const config = getProviderConfig('proxmox');
+    const config = getProviderConfig();
 
     if (!config.host || !config.user || !config.password) {
         showStatus('error', 'Please fill in host, username, and password');
@@ -771,7 +807,7 @@ function hideWindowsIsoSection() {
 
 // Refresh ISOs from Proxmox
 function refreshProxmoxIsos() {
-    const config = getProviderConfig('proxmox');
+    const config = getProviderConfig();
 
     if (!config.host || !config.user || !config.password) {
         showStatus('error', 'Please fill in Proxmox connection details first');
@@ -779,24 +815,30 @@ function refreshProxmoxIsos() {
     }
 
     const isoList = document.getElementById('isoList');
-    const isoSelect = document.getElementById('windowsIsoSelect');
 
     isoList.innerHTML = '<p>Loading ISOs from Proxmox storage...</p>';
+
+    // Use iso_storage for fetching ISOs
+    const fetchConfig = {
+        ...config,
+        storage: config.iso_storage || 'local'
+    };
 
     fetch('/api/proxmox/isos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
+        body: JSON.stringify(fetchConfig)
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             availableIsos = data.isos;
-            updateIsoDropdown(data.isos);
+            updateAllIsoDropdowns(data.isos);
             updateIsoList(data.isos);
 
             if (data.isos.length === 0) {
-                isoList.innerHTML = '<p class="empty-message">No ISOs found in Proxmox storage. Upload ISOs to the "local" storage on your Proxmox server.</p>';
+                const isoStorage = config.iso_storage || 'local';
+                isoList.innerHTML = `<p class="empty-message">No ISOs found in "${isoStorage}" storage. Upload Windows ISOs to your Proxmox server.</p>`;
             }
         } else {
             isoList.innerHTML = `<p class="error-message">Failed to load ISOs: ${data.error}</p>`;
@@ -807,46 +849,38 @@ function refreshProxmoxIsos() {
     });
 }
 
-// Update ISO dropdown
-function updateIsoDropdown(isos) {
-    const select = document.getElementById('windowsIsoSelect');
-    if (!select) return;
+// Update all 4 Windows ISO dropdowns
+function updateAllIsoDropdowns(isos) {
+    const dropdowns = [
+        'isoWindows10',
+        'isoWindows11',
+        'isoWindowsServer2022',
+        'isoWindowsServer2025'
+    ];
 
-    // Clear and rebuild
-    select.innerHTML = '<option value="">-- Auto-download (may fail) --</option>';
+    dropdowns.forEach(dropdownId => {
+        const select = document.getElementById(dropdownId);
+        if (!select) return;
 
-    // Filter for Windows ISOs
-    const windowsIsos = isos.filter(iso => iso.type === 'windows');
+        // Save current selection
+        const currentValue = select.value;
 
-    if (windowsIsos.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = 'Windows ISOs';
+        // Clear and rebuild
+        select.innerHTML = '<option value="">-- Select ISO --</option>';
 
-        windowsIsos.forEach(iso => {
+        // Add all ISOs as options
+        isos.forEach(iso => {
             const option = document.createElement('option');
             option.value = iso.volid;
             option.textContent = `${iso.filename} (${iso.size_display})`;
-            optgroup.appendChild(option);
+            select.appendChild(option);
         });
 
-        select.appendChild(optgroup);
-    }
-
-    // Add other ISOs in a separate group
-    const otherIsos = isos.filter(iso => iso.type !== 'windows');
-    if (otherIsos.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = 'Other ISOs';
-
-        otherIsos.forEach(iso => {
-            const option = document.createElement('option');
-            option.value = iso.volid;
-            option.textContent = `${iso.filename} (${iso.size_display})`;
-            optgroup.appendChild(option);
-        });
-
-        select.appendChild(optgroup);
-    }
+        // Restore selection if it still exists
+        if (currentValue) {
+            select.value = currentValue;
+        }
+    });
 }
 
 // Update ISO list display

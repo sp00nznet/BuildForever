@@ -33,126 +33,137 @@
                     </div>
                 </div>
 
-                <!-- Infrastructure Provider Section -->
+                <!-- Proxmox VE Connection Section -->
                 <div class="form-section">
-                    <h2>Infrastructure Provider</h2>
-                    <p class="section-description">Select where to deploy your GitLab build farm.</p>
+                    <h2>Proxmox VE Connection</h2>
+                    <p class="section-description">Configure your Proxmox server connection for deploying the GitLab build farm.</p>
 
                     <div class="form-group">
-                        <label for="provider">Deploy To:</label>
-                        <select id="provider" name="provider" onchange="toggleProviderOptions()">
-                            <option value="docker">Local Docker (This Machine)</option>
-                            <option value="proxmox">Proxmox VE</option>
-                        </select>
+                        <label for="proxmoxHost">Proxmox Host:</label>
+                        <input type="text" id="proxmoxHost" name="proxmoxHost" placeholder="192.168.1.100 or proxmox.local">
+                        <small>IP address or hostname of your Proxmox server</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label for="proxmoxPort">Port:</label>
+                            <input type="number" id="proxmoxPort" name="proxmoxPort" value="8006">
+                        </div>
+                        <div class="form-group half">
+                            <label for="proxmoxNode">Node Name:</label>
+                            <input type="text" id="proxmoxNode" name="proxmoxNode" placeholder="pve">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="proxmoxUser">Username:</label>
+                        <input type="text" id="proxmoxUser" name="proxmoxUser" placeholder="root@pam">
+                        <small>Format: user@realm (e.g., root@pam or admin@pve)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="proxmoxPassword">Password or API Token:</label>
+                        <input type="password" id="proxmoxPassword" name="proxmoxPassword">
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="proxmoxVerifySSL" name="proxmoxVerifySSL">
+                            Verify SSL Certificate
+                        </label>
+                        <small class="checkbox-help">Disable for self-signed certificates</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group third">
+                            <label for="proxmoxStorage">VM Storage:</label>
+                            <input type="text" id="proxmoxStorage" name="proxmoxStorage" placeholder="local-lvm">
+                            <small>Where to create VM disks</small>
+                        </div>
+                        <div class="form-group third">
+                            <label for="proxmoxIsoStorage">ISO Storage:</label>
+                            <input type="text" id="proxmoxIsoStorage" name="proxmoxIsoStorage" placeholder="local">
+                            <small>Where ISOs are stored</small>
+                        </div>
+                        <div class="form-group third">
+                            <label for="proxmoxBridge">Network Bridge:</label>
+                            <input type="text" id="proxmoxBridge" name="proxmoxBridge" placeholder="vmbr0">
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
+
+                    <!-- Windows ISO Selection - Per Version -->
+                    <div id="windowsIsoSection" class="iso-selection-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px; display: none;">
+                        <h4>Windows ISO Selection</h4>
+                        <p class="section-description">Select ISOs from your Proxmox storage for each Windows version you plan to deploy.</p>
+
+                        <div class="iso-grid">
+                            <div class="form-group">
+                                <label for="isoWindows10">Windows 10 ISO:</label>
+                                <select id="isoWindows10" name="isoWindows10" class="windows-iso-select">
+                                    <option value="">-- Select ISO --</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="isoWindows11">Windows 11 ISO:</label>
+                                <select id="isoWindows11" name="isoWindows11" class="windows-iso-select">
+                                    <option value="">-- Select ISO --</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="isoWindowsServer2022">Windows Server 2022 ISO:</label>
+                                <select id="isoWindowsServer2022" name="isoWindowsServer2022" class="windows-iso-select">
+                                    <option value="">-- Select ISO --</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="isoWindowsServer2025">Windows Server 2025 ISO:</label>
+                                <select id="isoWindowsServer2025" name="isoWindowsServer2025" class="windows-iso-select">
+                                    <option value="">-- Select ISO --</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn btn-small btn-secondary" onclick="refreshProxmoxIsos()">Refresh ISOs</button>
+
+                        <div id="isoList" class="iso-list" style="margin-top: 15px;">
+                            <p class="empty-message">Click "Refresh ISOs" after connecting to Proxmox to see available ISOs.</p>
+                        </div>
                     </div>
 
-                    <!-- Proxmox Options -->
-                    <div id="proxmoxOptions" class="conditional-options provider-options" style="display: none;">
-                        <h4>Proxmox VE Connection</h4>
-                        <div class="form-group">
-                            <label for="proxmoxHost">Proxmox Host:</label>
-                            <input type="text" id="proxmoxHost" name="proxmoxHost" placeholder="192.168.1.100 or proxmox.local">
-                            <small>IP address or hostname of your Proxmox server</small>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group half">
-                                <label for="proxmoxPort">Port:</label>
-                                <input type="number" id="proxmoxPort" name="proxmoxPort" value="8006">
-                            </div>
-                            <div class="form-group half">
-                                <label for="proxmoxNode">Node Name:</label>
-                                <input type="text" id="proxmoxNode" name="proxmoxNode" placeholder="pve">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label for="proxmoxUser">Username:</label>
-                            <input type="text" id="proxmoxUser" name="proxmoxUser" placeholder="root@pam">
-                            <small>Format: user@realm (e.g., root@pam or admin@pve)</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="proxmoxPassword">Password or API Token:</label>
-                            <input type="password" id="proxmoxPassword" name="proxmoxPassword">
-                        </div>
+                    <!-- Network Configuration -->
+                    <div class="network-config-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
+                        <h4>Network Configuration</h4>
                         <div class="form-group checkbox-group">
                             <label>
-                                <input type="checkbox" id="proxmoxVerifySSL" name="proxmoxVerifySSL">
-                                Verify SSL Certificate
+                                <input type="checkbox" id="useStaticIps" name="useStaticIps" onchange="toggleStaticIpConfig()">
+                                Configure Static IPs
                             </label>
-                            <small class="checkbox-help">Disable for self-signed certificates</small>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group half">
-                                <label for="proxmoxStorage">Storage:</label>
-                                <input type="text" id="proxmoxStorage" name="proxmoxStorage" placeholder="local-lvm">
-                            </div>
-                            <div class="form-group half">
-                                <label for="proxmoxBridge">Network Bridge:</label>
-                                <input type="text" id="proxmoxBridge" name="proxmoxBridge" placeholder="vmbr0">
-                            </div>
-                        </div>
-                        <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
-
-                        <!-- Windows ISO Selection -->
-                        <div id="windowsIsoSection" class="iso-selection-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px; display: none;">
-                            <h4>Windows ISO Selection</h4>
-                            <p class="section-description">Select existing ISOs from your Proxmox storage instead of auto-downloading.</p>
-
-                            <div class="form-group">
-                                <label for="windowsIsoSelect">Windows ISO:</label>
-                                <div class="iso-select-row">
-                                    <select id="windowsIsoSelect" name="windowsIsoSelect">
-                                        <option value="">-- Auto-download (may fail) --</option>
-                                    </select>
-                                    <button type="button" class="btn btn-small btn-secondary" onclick="refreshProxmoxIsos()">Refresh ISOs</button>
-                                </div>
-                                <small>Select a Windows ISO already uploaded to Proxmox storage</small>
-                            </div>
-
-                            <div id="isoList" class="iso-list">
-                                <p class="empty-message">Click "Refresh ISOs" after connecting to Proxmox to see available ISOs.</p>
-                            </div>
+                            <small class="checkbox-help">By default, all VMs/containers use DHCP</small>
                         </div>
 
-                        <!-- Network Configuration -->
-                        <div class="network-config-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
-                            <h4>Network Configuration</h4>
-                            <div class="form-group checkbox-group">
-                                <label>
-                                    <input type="checkbox" id="useStaticIps" name="useStaticIps" onchange="toggleStaticIpConfig()">
-                                    Configure Static IPs
-                                </label>
-                                <small class="checkbox-help">By default, all VMs/containers use DHCP</small>
+                        <div id="staticIpConfig" class="static-ip-config" style="display: none;">
+                            <div class="form-row">
+                                <div class="form-group third">
+                                    <label for="networkSubnet">Network Subnet:</label>
+                                    <input type="text" id="networkSubnet" name="networkSubnet" placeholder="192.168.1.0/24">
+                                </div>
+                                <div class="form-group third">
+                                    <label for="networkGateway">Gateway:</label>
+                                    <input type="text" id="networkGateway" name="networkGateway" placeholder="192.168.1.1">
+                                </div>
+                                <div class="form-group third">
+                                    <label for="networkDns">DNS Server:</label>
+                                    <input type="text" id="networkDns" name="networkDns" placeholder="8.8.8.8">
+                                </div>
                             </div>
 
-                            <div id="staticIpConfig" class="static-ip-config" style="display: none;">
-                                <div class="form-row">
-                                    <div class="form-group third">
-                                        <label for="networkSubnet">Network Subnet:</label>
-                                        <input type="text" id="networkSubnet" name="networkSubnet" placeholder="192.168.1.0/24">
-                                    </div>
-                                    <div class="form-group third">
-                                        <label for="networkGateway">Gateway:</label>
-                                        <input type="text" id="networkGateway" name="networkGateway" placeholder="192.168.1.1">
-                                    </div>
-                                    <div class="form-group third">
-                                        <label for="networkDns">DNS Server:</label>
-                                        <input type="text" id="networkDns" name="networkDns" placeholder="8.8.8.8">
-                                    </div>
+                            <div class="ip-assignments" id="ipAssignments">
+                                <!-- GitLab Server IP -->
+                                <div class="ip-assignment-row">
+                                    <span class="ip-host-name">GitLab Server</span>
+                                    <input type="text" id="ip-gitlab" placeholder="192.168.1.10" class="ip-input">
                                 </div>
-
-                                <div class="ip-assignments" id="ipAssignments">
-                                    <!-- GitLab Server IP -->
-                                    <div class="ip-assignment-row">
-                                        <span class="ip-host-name">GitLab Server</span>
-                                        <input type="text" id="ip-gitlab" placeholder="192.168.1.10" class="ip-input">
-                                    </div>
-                                    <!-- Runner IPs populated dynamically -->
-                                </div>
-                                <small>Leave IP blank to use DHCP for that specific host</small>
+                                <!-- Runner IPs populated dynamically -->
                             </div>
+                            <small>Leave IP blank to use DHCP for that specific host</small>
                         </div>
                     </div>
-
                 </div>
 
                 <!-- Credentials Section -->

@@ -1176,7 +1176,29 @@ footer {
     white-space: nowrap;
 }
 
+/* ISO grid for multiple Windows versions */
+.iso-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.iso-grid .form-group {
+    margin-bottom: 0;
+}
+
+.iso-grid select {
+    width: 100%;
+}
+
 /* Responsive */
+@media (max-width: 768px) {
+    .iso-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 600px) {
     .iso-select-row {
         flex-direction: column;
