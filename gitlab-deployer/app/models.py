@@ -1,0 +1,309 @@
+"""Database models for BuildForever credential and configuration management"""
+import sqlite3
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+from contextlib import contextmanager
+
+# Database path - use data directory for persistence
+DATA_DIR = Path(__file__).parent.parent.parent / 'data'
+DATA_DIR.mkdir(exist_ok=True)
+DATABASE_PATH = DATA_DIR / 'buildforever.db'
+
+
+@contextmanager
+def get_db():
+    """Context manager for database connections"""
+    conn = sqlite3.connect(str(DATABASE_PATH))
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Initialize the database with required tables"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Saved configurations table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                domain TEXT NOT NULL,
+                email TEXT NOT NULL,
+                admin_password TEXT,
+                letsencrypt_enabled INTEGER DEFAULT 1,
+                runners TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Deployment history table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS deployment_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deployment_id TEXT NOT NULL,
+                config_name TEXT,
+                domain TEXT NOT NULL,
+                runners TEXT,
+                status TEXT DEFAULT 'pending',
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                error_message TEXT,
+                logs TEXT
+            )
+        ''')
+
+        # SSH keys table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ssh_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                key_type TEXT DEFAULT 'private',
+                key_content TEXT NOT NULL,
+                passphrase TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+
+class SavedConfig:
+    """Model for saved deployment configurations"""
+
+    @staticmethod
+    def create(name, domain, email, admin_password=None, letsencrypt_enabled=True, runners=None):
+        """Create a new saved configuration"""
+        runners_json = json.dumps(runners or [])
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO saved_configs (name, domain, email, admin_password, letsencrypt_enabled, runners)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, domain, email, admin_password, int(letsencrypt_enabled), runners_json))
+            return cursor.lastrowid
+
+    @staticmethod
+    def update(config_id, **kwargs):
+        """Update an existing configuration"""
+        allowed_fields = ['name', 'domain', 'email', 'admin_password', 'letsencrypt_enabled', 'runners']
+        updates = []
+        values = []
+
+        for field in allowed_fields:
+            if field in kwargs:
+                value = kwargs[field]
+                if field == 'runners':
+                    value = json.dumps(value or [])
+                elif field == 'letsencrypt_enabled':
+                    value = int(value)
+                updates.append(f'{field} = ?')
+                values.append(value)
+
+        if updates:
+            updates.append('updated_at = CURRENT_TIMESTAMP')
+            values.append(config_id)
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f'''
+                    UPDATE saved_configs SET {', '.join(updates)} WHERE id = ?
+                ''', values)
+                return cursor.rowcount > 0
+        return False
+
+    @staticmethod
+    def delete(config_id):
+        """Delete a saved configuration"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM saved_configs WHERE id = ?', (config_id,))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def get_all():
+        """Get all saved configurations (without passwords)"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                FROM saved_configs ORDER BY updated_at DESC
+            ''')
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row['id'],
+                    'name': row['name'],
+                    'domain': row['domain'],
+                    'email': row['email'],
+                    'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
+                    'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                }
+                for row in rows
+            ]
+
+    @staticmethod
+    def get_by_id(config_id, include_password=False):
+        """Get a specific configuration by ID"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if include_password:
+                cursor.execute('SELECT * FROM saved_configs WHERE id = ?', (config_id,))
+            else:
+                cursor.execute('''
+                    SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                    FROM saved_configs WHERE id = ?
+                ''', (config_id,))
+            row = cursor.fetchone()
+            if row:
+                result = {
+                    'id': row['id'],
+                    'name': row['name'],
+                    'domain': row['domain'],
+                    'email': row['email'],
+                    'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
+                    'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                }
+                if include_password and 'admin_password' in row.keys():
+                    result['admin_password'] = row['admin_password']
+                return result
+            return None
+
+    @staticmethod
+    def get_by_name(name):
+        """Get a configuration by name"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, name, domain, email, letsencrypt_enabled, runners, created_at, updated_at
+                FROM saved_configs WHERE name = ?
+            ''', (name,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'id': row['id'],
+                    'name': row['name'],
+                    'domain': row['domain'],
+                    'email': row['email'],
+                    'letsencrypt_enabled': bool(row['letsencrypt_enabled']),
+                    'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'created_at': row['created_at'],
+                    'updated_at': row['updated_at']
+                }
+            return None
+
+
+class DeploymentHistory:
+    """Model for deployment history tracking"""
+
+    @staticmethod
+    def create(deployment_id, domain, config_name=None, runners=None):
+        """Create a new deployment record"""
+        runners_json = json.dumps(runners or [])
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO deployment_history (deployment_id, config_name, domain, runners)
+                VALUES (?, ?, ?, ?)
+            ''', (deployment_id, config_name, domain, runners_json))
+            return cursor.lastrowid
+
+    @staticmethod
+    def update_status(deployment_id, status, error_message=None, logs=None):
+        """Update deployment status"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if status in ('completed', 'failed'):
+                cursor.execute('''
+                    UPDATE deployment_history
+                    SET status = ?, error_message = ?, logs = ?, completed_at = CURRENT_TIMESTAMP
+                    WHERE deployment_id = ?
+                ''', (status, error_message, logs, deployment_id))
+            else:
+                cursor.execute('''
+                    UPDATE deployment_history SET status = ?, error_message = ?, logs = ?
+                    WHERE deployment_id = ?
+                ''', (status, error_message, logs, deployment_id))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def get_recent(limit=10):
+        """Get recent deployment history"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM deployment_history ORDER BY started_at DESC LIMIT ?
+            ''', (limit,))
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row['id'],
+                    'deployment_id': row['deployment_id'],
+                    'config_name': row['config_name'],
+                    'domain': row['domain'],
+                    'runners': json.loads(row['runners']) if row['runners'] else [],
+                    'status': row['status'],
+                    'started_at': row['started_at'],
+                    'completed_at': row['completed_at'],
+                    'error_message': row['error_message']
+                }
+                for row in rows
+            ]
+
+
+class SSHKey:
+    """Model for SSH key management"""
+
+    @staticmethod
+    def create(name, key_content, key_type='private', passphrase=None):
+        """Save an SSH key"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO ssh_keys (name, key_type, key_content, passphrase)
+                VALUES (?, ?, ?, ?)
+            ''', (name, key_type, key_content, passphrase))
+            return cursor.lastrowid
+
+    @staticmethod
+    def delete(key_id):
+        """Delete an SSH key"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM ssh_keys WHERE id = ?', (key_id,))
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def get_all():
+        """Get all SSH keys (metadata only, not content)"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, name, key_type, created_at FROM ssh_keys ORDER BY created_at DESC
+            ''')
+            return [dict(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def get_by_id(key_id):
+        """Get an SSH key by ID (includes content)"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM ssh_keys WHERE id = ?', (key_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+
+# Initialize database on module import
+init_db()

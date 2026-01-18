@@ -2,6 +2,14 @@
 document.addEventListener('DOMContentLoaded', function() {
     const deploymentForm = document.getElementById('deploymentForm');
 
+    // Load saved configurations on page load
+    loadSavedConfigs();
+
+    // Update runner count on checkbox change
+    document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
+        checkbox.addEventListener('change', updateSelectedCount);
+    });
+
     // Form submission handler
     deploymentForm.addEventListener('submit', function(e) {
         e.preventDefault();
@@ -69,6 +77,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
+
+// Update selected runner count display
+function updateSelectedCount() {
+    const count = document.querySelectorAll('input[name="runners"]:checked').length;
+    const countDisplay = document.querySelector('.selected-count');
+    if (countDisplay) {
+        countDisplay.textContent = `${count} selected`;
+    }
+}
 
 // Show deployment plan
 function showDeploymentPlan(plan) {
@@ -224,6 +241,7 @@ function selectAllRunners() {
     document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
         checkbox.checked = true;
     });
+    updateSelectedCount();
 }
 
 // Deselect all runners
@@ -231,4 +249,206 @@ function deselectAllRunners() {
     document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
         checkbox.checked = false;
     });
+    updateSelectedCount();
 }
+
+// ============================================================================
+// Saved Configurations
+// ============================================================================
+
+// Load saved configurations into dropdown
+function loadSavedConfigs() {
+    fetch('/api/configs')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const select = document.getElementById('savedConfig');
+                // Clear existing options except the first one
+                select.innerHTML = '<option value="">-- Select a saved configuration --</option>';
+
+                data.configs.forEach(config => {
+                    const option = document.createElement('option');
+                    option.value = config.id;
+                    option.textContent = `${config.name} (${config.domain})`;
+                    select.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Failed to load saved configs:', error);
+        });
+}
+
+// Load a saved configuration into the form
+function loadSavedConfig() {
+    const select = document.getElementById('savedConfig');
+    const configId = select.value;
+
+    if (!configId) {
+        return;
+    }
+
+    fetch(`/api/configs/${configId}?include_password=true`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.config) {
+                const config = data.config;
+
+                // Fill form fields
+                document.getElementById('domain').value = config.domain || '';
+                document.getElementById('email').value = config.email || '';
+
+                if (config.admin_password) {
+                    document.getElementById('adminPassword').value = config.admin_password;
+                    document.getElementById('confirmPassword').value = config.admin_password;
+                } else {
+                    document.getElementById('adminPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                }
+
+                document.getElementById('letsencrypt').checked = config.letsencrypt_enabled;
+
+                // Set runner checkboxes
+                document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
+                    checkbox.checked = config.runners && config.runners.includes(checkbox.value);
+                });
+
+                updateSelectedCount();
+                showStatus('info', `Loaded configuration: ${config.name}`);
+            } else {
+                showStatus('error', data.error || 'Failed to load configuration');
+            }
+        })
+        .catch(error => {
+            showStatus('error', 'Failed to load configuration: ' + error.message);
+        });
+}
+
+// Toggle save configuration modal
+function toggleSaveConfigModal() {
+    const modal = document.getElementById('saveConfigModal');
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'flex';
+        document.getElementById('configName').focus();
+    } else {
+        modal.style.display = 'none';
+    }
+}
+
+// Save current form configuration
+function saveCurrentConfig() {
+    const name = document.getElementById('configName').value.trim();
+
+    if (!name) {
+        alert('Please enter a configuration name');
+        return;
+    }
+
+    const domain = document.getElementById('domain').value;
+    const email = document.getElementById('email').value;
+
+    if (!domain || !email) {
+        alert('Please fill in domain and email before saving');
+        return;
+    }
+
+    // Collect selected runners
+    const selectedRunners = [];
+    document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
+        selectedRunners.push(checkbox.value);
+    });
+
+    const config = {
+        name: name,
+        domain: domain,
+        email: email,
+        letsencrypt_enabled: document.getElementById('letsencrypt').checked,
+        runners: selectedRunners
+    };
+
+    // Include password if checkbox is checked
+    if (document.getElementById('savePassword').checked) {
+        config.admin_password = document.getElementById('adminPassword').value;
+    }
+
+    fetch('/api/configs', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            toggleSaveConfigModal();
+            loadSavedConfigs();
+            showStatus('success', 'Configuration saved successfully');
+            document.getElementById('configName').value = '';
+            document.getElementById('savePassword').checked = false;
+        } else {
+            alert(data.error || 'Failed to save configuration');
+        }
+    })
+    .catch(error => {
+        alert('Failed to save configuration: ' + error.message);
+    });
+}
+
+// Toggle deployment history modal
+function toggleHistoryModal() {
+    const modal = document.getElementById('historyModal');
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'flex';
+        loadDeploymentHistory();
+    } else {
+        modal.style.display = 'none';
+    }
+}
+
+// Load deployment history
+function loadDeploymentHistory() {
+    const historyList = document.getElementById('historyList');
+    historyList.innerHTML = '<p>Loading...</p>';
+
+    fetch('/api/history')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.history.length > 0) {
+                historyList.innerHTML = data.history.map(item => `
+                    <div class="history-item">
+                        <div class="domain">${item.domain}</div>
+                        <div class="meta">
+                            <span class="status ${item.status}">${item.status}</span>
+                            <span>Started: ${new Date(item.started_at).toLocaleString()}</span>
+                            ${item.completed_at ? `<span>Completed: ${new Date(item.completed_at).toLocaleString()}</span>` : ''}
+                        </div>
+                        ${item.runners && item.runners.length > 0 ? `<div class="meta">Runners: ${item.runners.join(', ')}</div>` : ''}
+                    </div>
+                `).join('');
+            } else if (data.success) {
+                historyList.innerHTML = '<p>No deployment history yet.</p>';
+            } else {
+                historyList.innerHTML = '<p>Failed to load history.</p>';
+            }
+        })
+        .catch(error => {
+            historyList.innerHTML = '<p>Failed to load history: ' + error.message + '</p>';
+        });
+}
+
+// Close modals when clicking outside
+document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('modal')) {
+        e.target.style.display = 'none';
+    }
+});
+
+// Close modals on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.style.display = 'none';
+        });
+    }
+});

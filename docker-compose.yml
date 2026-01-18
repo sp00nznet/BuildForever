@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # BuildForever Web Application
+  buildforever:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: buildforever:latest
+    container_name: buildforever-app
+    restart: unless-stopped
+    ports:
+      - "${FLASK_PORT:-5000}:5000"
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-change-me-in-production}
+      - TZ=${TZ:-UTC}
+    volumes:
+      # Persist configuration and logs
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Mount Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - buildforever-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # GitLab CE Server (optional - enable when deploying)
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab-server
+    restart: unless-stopped
+    hostname: ${GITLAB_HOSTNAME:-gitlab.local}
+    profiles:
+      - gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://${GITLAB_HOSTNAME:-gitlab.local}'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-password123}'
+        letsencrypt['enable'] = ${LETSENCRYPT_ENABLED:-false}
+        letsencrypt['contact_emails'] = ['${LETSENCRYPT_EMAIL:-admin@example.com}']
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        unicorn['worker_processes'] = 2
+        postgresql['shared_buffers'] = "256MB"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2222:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - buildforever-network
+    shm_size: '256m'
+
+  # GitLab Runner (template - scale as needed)
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: gitlab-runner-1
+    restart: unless-stopped
+    profiles:
+      - runners
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      - buildforever-network
+    depends_on:
+      - gitlab
+
+networks:
+  buildforever-network:
+    driver: bridge
+    name: buildforever-net
+
+volumes:
+  gitlab-config:
+    name: gitlab-config
+  gitlab-logs:
+    name: gitlab-logs
+  gitlab-data:
+    name: gitlab-data
+  gitlab-runner-config:
+    name: gitlab-runner-config
