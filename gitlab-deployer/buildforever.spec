@@ -61,11 +61,6 @@ hiddenimports = [
     'proxmoxer.core',
     'proxmoxer.backends',
     'proxmoxer.backends.https',
-    'pyvmomi',
-    'pyVim',
-    'pyVim.connect',
-    'pyVmomi',
-    'pyVmomi.VmomiSupport',
 ]
 
 # Data files to include
