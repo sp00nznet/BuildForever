@@ -14,10 +14,14 @@ BuildForever is a comprehensive deployment tool that creates a complete GitLab C
   - 1 macOS Runner
 - **Automatic Runner Registration**: All runners auto-register with your GitLab instance
 - **Web Interface**: Easy-to-use Flask-based UI for selecting and deploying runners
+- **Saved Configurations**: Save and load deployment configurations for quick repeated deployments
+- **Credential Management**: Securely store and reuse SSH keys and deployment credentials
+- **Docker Support**: Full Docker containerization with docker-compose for easy deployment
 - **Automated SSL**: Built-in Let's Encrypt integration with automatic certificate generation and renewal
 - **Infrastructure as Code**: Terraform for consistent infrastructure provisioning
 - **Configuration Management**: Ansible playbooks for platform-specific setup
 - **Tagged Runners**: Each runner pre-configured with platform-specific tags for targeted builds
+- **Deployment History**: Track all deployments with status and logs
 - **Fully Automated**: From configuration to fully functional build farm
 
 ## Quick Start
@@ -45,6 +49,15 @@ cd BuildForever
 git clone https://github.com/sp00nznet/BuildForever.git
 cd BuildForever
 scripts\start.bat
+```
+
+**Docker:**
+```bash
+git clone https://github.com/sp00nznet/BuildForever.git
+cd BuildForever
+cp .env.example .env
+# Edit .env with your configuration
+docker-compose up -d
 ```
 
 ### Deploy Build Farm
@@ -84,7 +97,9 @@ BuildForever uses a modern infrastructure-as-code approach:
 ```
 BuildForever/
 ├── gitlab-deployer/     # Flask web application
-│   ├── app/            # Web interface
+│   ├── app/            # Web interface with saved configs
+│   │   ├── models.py   # Database models for credentials
+│   │   └── routes.py   # API endpoints
 │   └── run.py          # Application entry point
 ├── terraform/          # Infrastructure provisioning
 │   ├── main.tf         # GitLab container configuration
@@ -94,8 +109,13 @@ BuildForever/
 │   └── roles/          # Reusable roles
 ├── scripts/            # Deployment orchestration
 │   ├── deploy.sh       # Main deployment script
-│   └── start.sh/bat    # Web interface launcher
-└── docs/               # Documentation
+│   ├── start.sh/bat    # Web interface launcher
+│   ├── stop.sh/bat     # Stop running services
+│   └── clear_cache.*   # Cache clearing utilities
+├── docs/               # Documentation
+├── Dockerfile          # Container build configuration
+├── docker-compose.yml  # Docker orchestration
+└── .env.example        # Environment configuration template
 ```
 
 ## Documentation
@@ -181,6 +201,51 @@ For automation or advanced users:
 
 # Destroy
 ./scripts/deploy.sh destroy
+```
+
+### Docker Deployment
+
+Deploy BuildForever in a container:
+
+```bash
+# Build and start
+docker-compose up -d
+
+# View logs
+docker-compose logs -f buildforever
+
+# Stop services
+docker-compose down
+
+# Deploy with GitLab (optional profile)
+docker-compose --profile gitlab up -d
+```
+
+### Saved Configurations
+
+BuildForever allows you to save and load deployment configurations:
+
+1. Fill in your deployment details (domain, email, runners)
+2. Click "Save Current" and give it a name
+3. Next time, select from the dropdown to instantly load saved settings
+4. Optionally save passwords locally for quick re-deployments
+
+### Utility Scripts
+
+```bash
+# Stop running services
+./scripts/stop.sh          # Linux/macOS
+scripts\stop.bat           # Windows
+
+# Clear cache (Python bytecode, temp files)
+./scripts/clear_cache.sh   # Linux/macOS
+scripts\clear_cache.bat    # Windows
+
+# Clear including logs
+./scripts/clear_cache.sh --include-logs
+
+# Clear including Terraform state (requires re-init)
+./scripts/clear_cache.sh --include-terraform
 ```
 
 ### Custom Configuration

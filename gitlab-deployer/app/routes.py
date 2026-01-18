@@ -1,12 +1,36 @@
 """Flask routes for GitLab Build Farm Deployer"""
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, render_template, request, jsonify, session, make_response
 import subprocess
 import json
 import os
 import time
 from pathlib import Path
+from functools import wraps
+from .models import SavedConfig, DeploymentHistory, SSHKey, init_db
 
 bp = Blueprint('main', __name__)
+
+
+def no_cache(f):
+    """Decorator to add no-cache headers to responses"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        response = make_response(f(*args, **kwargs))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+    return decorated_function
+
+
+@bp.after_request
+def add_cache_headers(response):
+    """Add no-cache headers to all API responses"""
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 SUPPORTED_RUNNERS = {
     'windows-10': {'name': 'Windows 10', 'tags': 'windows,windows-10,desktop'},
@@ -214,3 +238,285 @@ def parse_runner_status(logs):
             })
 
     return runner_status
+
+
+# ============================================================================
+# Saved Configurations API
+# ============================================================================
+
+@bp.route('/api/configs', methods=['GET'])
+def get_saved_configs():
+    """Get all saved configurations"""
+    try:
+        configs = SavedConfig.get_all()
+        return jsonify({
+            'success': True,
+            'configs': configs
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/configs', methods=['POST'])
+def save_config():
+    """Save a new configuration"""
+    data = request.json
+
+    if not data.get('name'):
+        return jsonify({
+            'success': False,
+            'error': 'Configuration name is required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = SavedConfig.get_by_name(data['name'])
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': 'A configuration with this name already exists'
+            }), 400
+
+        config_id = SavedConfig.create(
+            name=data['name'],
+            domain=data.get('domain', ''),
+            email=data.get('email', ''),
+            admin_password=data.get('admin_password'),
+            letsencrypt_enabled=data.get('letsencrypt_enabled', True),
+            runners=data.get('runners', [])
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Configuration saved successfully',
+            'config_id': config_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/configs/<int:config_id>', methods=['GET'])
+def get_config(config_id):
+    """Get a specific configuration"""
+    try:
+        # Include password only if explicitly requested
+        include_password = request.args.get('include_password', 'false').lower() == 'true'
+        config = SavedConfig.get_by_id(config_id, include_password=include_password)
+
+        if config:
+            return jsonify({
+                'success': True,
+                'config': config
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Configuration not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/configs/<int:config_id>', methods=['PUT'])
+def update_config(config_id):
+    """Update an existing configuration"""
+    data = request.json
+
+    try:
+        success = SavedConfig.update(config_id, **data)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Configuration updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Configuration not found or no changes made'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/configs/<int:config_id>', methods=['DELETE'])
+def delete_config(config_id):
+    """Delete a saved configuration"""
+    try:
+        success = SavedConfig.delete(config_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Configuration deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Configuration not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# ============================================================================
+# Deployment History API
+# ============================================================================
+
+@bp.route('/api/history', methods=['GET'])
+def get_deployment_history():
+    """Get recent deployment history"""
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        history = DeploymentHistory.get_recent(limit=limit)
+        return jsonify({
+            'success': True,
+            'history': history
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# ============================================================================
+# SSH Keys API
+# ============================================================================
+
+@bp.route('/api/ssh-keys', methods=['GET'])
+def get_ssh_keys():
+    """Get all saved SSH keys (metadata only)"""
+    try:
+        keys = SSHKey.get_all()
+        return jsonify({
+            'success': True,
+            'keys': keys
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/ssh-keys', methods=['POST'])
+def save_ssh_key():
+    """Save a new SSH key"""
+    data = request.json
+
+    if not data.get('name') or not data.get('key_content'):
+        return jsonify({
+            'success': False,
+            'error': 'Name and key content are required'
+        }), 400
+
+    try:
+        key_id = SSHKey.create(
+            name=data['name'],
+            key_content=data['key_content'],
+            key_type=data.get('key_type', 'private'),
+            passphrase=data.get('passphrase')
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'SSH key saved successfully',
+            'key_id': key_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/ssh-keys/<int:key_id>', methods=['DELETE'])
+def delete_ssh_key(key_id):
+    """Delete an SSH key"""
+    try:
+        success = SSHKey.delete(key_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'SSH key deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'SSH key not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/ssh-keys/upload', methods=['POST'])
+def upload_ssh_key():
+    """Upload an SSH key file"""
+    if 'file' not in request.files:
+        return jsonify({
+            'success': False,
+            'error': 'No file provided'
+        }), 400
+
+    file = request.files['file']
+    name = request.form.get('name', file.filename)
+
+    # Validate file extension
+    allowed_extensions = {'.pub', '.pem', '.key', ''}
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        return jsonify({
+            'success': False,
+            'error': 'Invalid file type. Allowed: .pub, .pem, .key'
+        }), 400
+
+    try:
+        key_content = file.read().decode('utf-8')
+        key_type = 'public' if file_ext == '.pub' else 'private'
+
+        key_id = SSHKey.create(
+            name=name,
+            key_content=key_content,
+            key_type=key_type
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'SSH key uploaded successfully',
+            'key_id': key_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# ============================================================================
+# Utility Endpoints
+# ============================================================================
+
+@bp.route('/api/runners')
+def get_runners():
+    """Get list of supported runners"""
+    return jsonify({
+        'success': True,
+        'runners': SUPPORTED_RUNNERS
+    })

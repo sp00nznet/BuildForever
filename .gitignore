@@ -33,6 +33,10 @@ config/
 logs/
 *.log
 
+# Data directory (contains database with credentials)
+data/
+*.db
+
 # IDE
 .vscode/
 .idea/
@@ -44,9 +48,6 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Docker
-.dockerignore
-
 # Temporary files
 tmp/
 temp/
@@ -55,3 +56,6 @@ temp/
 # Backup files
 *.bak
 *.backup
+
+# Docker override files
+docker-compose.override.yml
