@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 from functools import wraps
-from .models import SavedConfig, DeploymentHistory, SSHKey, init_db
+from .models import SavedConfig, DeploymentHistory, SSHKey, Credential, init_db
 
 bp = Blueprint('main', __name__)
 
@@ -275,7 +275,9 @@ def execute_proxmox_deployment(config, deployment_id):
     """Deploy GitLab and runners to Proxmox VE with full provisioning."""
     import threading
     from .proxmox_client import (
-        ProxmoxClient, get_gitlab_install_script, get_runner_install_script
+        ProxmoxClient, get_gitlab_install_script, get_runner_install_script,
+        get_linux_credential_script, get_windows_credential_script,
+        get_windows_ssh_key_script, get_macos_credential_script
     )
 
     provider_config = config.get('provider_config', {})
@@ -314,6 +316,12 @@ def execute_proxmox_deployment(config, deployment_id):
         domain = config.get('domain', 'gitlab.local')
         admin_password = config.get('admin_password', 'changeme')
         email = config.get('email', '')
+
+        # Get deployment credential if specified
+        deploy_credential = None
+        credential_id = config.get('credential_id')
+        if credential_id:
+            deploy_credential = Credential.get_by_id(credential_id, include_secrets=True)
 
         # Track created resources
         created = []
@@ -369,6 +377,16 @@ def execute_proxmox_deployment(config, deployment_id):
 
                     # Start provisioning in background
                     def provision_gitlab():
+                        # First inject credentials if specified
+                        if deploy_credential:
+                            cred_script = get_linux_credential_script(
+                                username=deploy_credential['username'],
+                                password=deploy_credential.get('password'),
+                                ssh_public_key=deploy_credential.get('ssh_public_key')
+                            )
+                            client.provision_container(selected_node, gitlab_vmid, cred_script)
+
+                        # Then install GitLab
                         script = get_gitlab_install_script(
                             domain=domain,
                             admin_password=admin_password,
@@ -380,6 +398,8 @@ def execute_proxmox_deployment(config, deployment_id):
                     thread = threading.Thread(target=provision_gitlab, daemon=True)
                     thread.start()
                     created[-1]['status'] = 'provisioning'
+                    if deploy_credential:
+                        created[-1]['credential'] = deploy_credential['name']
             else:
                 errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
 
@@ -432,20 +452,32 @@ def execute_proxmox_deployment(config, deployment_id):
                         })
 
                         # Provision runner in background
-                        def provision_runner(vmid, rtype):
+                        def provision_runner(vmid, rtype, cred):
                             ip = client.get_container_ip(selected_node, vmid)
                             if ip:
+                                # First inject credentials if specified
+                                if cred:
+                                    cred_script = get_linux_credential_script(
+                                        username=cred['username'],
+                                        password=cred.get('password'),
+                                        ssh_public_key=cred.get('ssh_public_key')
+                                    )
+                                    client.provision_container(selected_node, vmid, cred_script)
+
+                                # Then install runner
                                 # Note: registration_token would come from GitLab API after it's running
                                 script = get_runner_install_script(rtype, gitlab_url, 'REGISTRATION_TOKEN')
                                 client.provision_container(selected_node, vmid, script)
 
                         thread = threading.Thread(
                             target=provision_runner,
-                            args=(runner_vmid, runner),
+                            args=(runner_vmid, runner, deploy_credential),
                             daemon=True
                         )
                         thread.start()
                         created[-1]['status'] = 'provisioning'
+                        if deploy_credential:
+                            created[-1]['credential'] = deploy_credential['name']
                     else:
                         errors.append(f'{runner}: {result.get("error", "Creation failed")}')
 
@@ -470,6 +502,12 @@ def execute_proxmox_deployment(config, deployment_id):
 
                     if result['success']:
                         iso_status = 'ISO attached' if windows_iso else 'ISO download pending'
+                        cred_info = {}
+                        if deploy_credential:
+                            cred_info['credential'] = deploy_credential['name']
+                            cred_info['credential_user'] = deploy_credential['username']
+                            # Generate Windows provisioning script info
+                            cred_info['provisioning_script'] = 'windows'
                         created.append({
                             'vmid': runner_vmid,
                             'name': runner_name,
@@ -477,7 +515,8 @@ def execute_proxmox_deployment(config, deployment_id):
                             'os': runner,
                             'status': f'created ({iso_status})',
                             'iso': windows_iso,
-                            'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk'
+                            'resources': f'{runner_config.get("cores", 4)} CPU, {runner_config.get("memory", 8192)//1024}GB RAM, {runner_config.get("disk", 60)}GB disk',
+                            **cred_info
                         })
 
                         # Start VM if ISO is attached
@@ -512,6 +551,11 @@ def execute_proxmox_deployment(config, deployment_id):
 
                     if result['success']:
                         iso_status = 'recovery image attached' if macos_iso else 'recovery download pending'
+                        cred_info = {}
+                        if deploy_credential:
+                            cred_info['credential'] = deploy_credential['name']
+                            cred_info['credential_user'] = deploy_credential['username']
+                            cred_info['provisioning_script'] = 'macos'
                         created.append({
                             'vmid': runner_vmid,
                             'name': runner_name,
@@ -520,7 +564,8 @@ def execute_proxmox_deployment(config, deployment_id):
                             'status': f'created ({iso_status})',
                             'iso': macos_iso,
                             'resources': '4 CPU, 8GB RAM, 80GB disk',
-                            'notes': 'Requires Apple hardware per licensing. Uses OSX-PROXMOX configuration.'
+                            'notes': 'Requires Apple hardware per licensing. Uses OSX-PROXMOX configuration.',
+                            **cred_info
                         })
 
                         # Start VM if recovery image is attached
@@ -541,8 +586,16 @@ def execute_proxmox_deployment(config, deployment_id):
             f'Node: {selected_node}',
             f'Storage: {storage}',
             f'Network: {bridge}',
-            ''
         ]
+
+        # Show credential info
+        if deploy_credential:
+            output_lines.append(f'Credential: {deploy_credential["name"]} (user: {deploy_credential["username"]})')
+            if deploy_credential.get('ssh_public_key'):
+                output_lines.append('  - SSH key will be added to authorized_keys')
+            if deploy_credential.get('password'):
+                output_lines.append('  - Password will be set for login')
+        output_lines.append('')
 
         if created:
             output_lines.append('Created Resources:')
@@ -550,6 +603,8 @@ def execute_proxmox_deployment(config, deployment_id):
                 ip_str = f' - IP: {item["ip"]}' if item.get('ip') else ''
                 output_lines.append(f'  - {item["type"].upper()} {item["vmid"]}: {item["name"]} ({item["resources"]}){ip_str}')
                 output_lines.append(f'    Status: {item["status"]}')
+                if item.get('credential'):
+                    output_lines.append(f'    Credential: {item["credential"]} ({item.get("credential_user", "")})')
 
         if errors:
             output_lines.append('')
@@ -1056,6 +1111,323 @@ def test_proxmox_connection(config):
             'success': False,
             'error': f'Connection failed: {str(e)}'
         }), 400
+
+
+# ============================================================================
+# Credentials API - Unified credential management for Windows/Linux/macOS
+# ============================================================================
+
+@bp.route('/api/credentials', methods=['GET'])
+def get_credentials():
+    """Get all saved credentials (without secrets)"""
+    try:
+        credentials = Credential.get_all(include_secrets=False)
+        return jsonify({
+            'success': True,
+            'credentials': credentials
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials', methods=['POST'])
+def create_credential():
+    """Create a new credential"""
+    data = request.json
+
+    if not data.get('name') or not data.get('username'):
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    # Must have at least password or SSH key
+    if not data.get('password') and not data.get('ssh_public_key'):
+        return jsonify({
+            'success': False,
+            'error': 'Either password or SSH public key is required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(data['name'])
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': 'A credential with this name already exists'
+            }), 400
+
+        credential_id = Credential.create(
+            name=data['name'],
+            username=data['username'],
+            password=data.get('password'),
+            ssh_public_key=data.get('ssh_public_key'),
+            ssh_private_key=data.get('ssh_private_key'),
+            ssh_key_passphrase=data.get('ssh_key_passphrase'),
+            is_default=data.get('is_default', False)
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential created successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['GET'])
+def get_credential(credential_id):
+    """Get a specific credential"""
+    try:
+        include_secrets = request.args.get('include_secrets', 'false').lower() == 'true'
+        credential = Credential.get_by_id(credential_id, include_secrets=include_secrets)
+
+        if credential:
+            return jsonify({
+                'success': True,
+                'credential': credential
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['PUT'])
+def update_credential(credential_id):
+    """Update an existing credential"""
+    data = request.json
+
+    try:
+        success = Credential.update(credential_id, **data)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Credential updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found or no changes made'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>', methods=['DELETE'])
+def delete_credential(credential_id):
+    """Delete a credential"""
+    try:
+        success = Credential.delete(credential_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Credential deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>/set-default', methods=['POST'])
+def set_default_credential(credential_id):
+    """Set a credential as the default"""
+    try:
+        success = Credential.set_default(credential_id)
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Default credential updated'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/generate', methods=['POST'])
+def generate_credential():
+    """Generate a new credential with SSH keypair"""
+    data = request.json
+
+    if not data.get('name') or not data.get('username'):
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(data['name'])
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': 'A credential with this name already exists'
+            }), 400
+
+        credential_id = Credential.generate_ssh_keypair(
+            name=data['name'],
+            username=data['username'],
+            password=data.get('password'),
+            key_type=data.get('key_type', 'ed25519'),
+            passphrase=data.get('ssh_key_passphrase')
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential with SSH keypair generated successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/upload-key', methods=['POST'])
+def upload_credential_key():
+    """Upload SSH key files to create or update a credential"""
+    name = request.form.get('name')
+    username = request.form.get('username')
+    password = request.form.get('password')
+    is_default = request.form.get('is_default', 'false').lower() == 'true'
+
+    if not name or not username:
+        return jsonify({
+            'success': False,
+            'error': 'Name and username are required'
+        }), 400
+
+    ssh_public_key = None
+    ssh_private_key = None
+
+    # Handle public key upload
+    if 'public_key' in request.files:
+        public_key_file = request.files['public_key']
+        if public_key_file.filename:
+            ssh_public_key = public_key_file.read().decode('utf-8').strip()
+
+    # Handle private key upload
+    if 'private_key' in request.files:
+        private_key_file = request.files['private_key']
+        if private_key_file.filename:
+            ssh_private_key = private_key_file.read().decode('utf-8').strip()
+
+    # Handle pasted public key
+    if not ssh_public_key and request.form.get('ssh_public_key'):
+        ssh_public_key = request.form.get('ssh_public_key').strip()
+
+    # Handle pasted private key
+    if not ssh_private_key and request.form.get('ssh_private_key'):
+        ssh_private_key = request.form.get('ssh_private_key').strip()
+
+    # Must have at least password or SSH key
+    if not password and not ssh_public_key:
+        return jsonify({
+            'success': False,
+            'error': 'Either password or SSH public key is required'
+        }), 400
+
+    try:
+        # Check if name already exists
+        existing = Credential.get_by_name(name)
+        if existing:
+            # Update existing credential
+            Credential.update(
+                existing['id'],
+                username=username,
+                password=password,
+                ssh_public_key=ssh_public_key,
+                ssh_private_key=ssh_private_key,
+                is_default=is_default
+            )
+            return jsonify({
+                'success': True,
+                'message': 'Credential updated successfully',
+                'credential_id': existing['id']
+            })
+
+        # Create new credential
+        credential_id = Credential.create(
+            name=name,
+            username=username,
+            password=password,
+            ssh_public_key=ssh_public_key,
+            ssh_private_key=ssh_private_key,
+            is_default=is_default
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Credential created successfully',
+            'credential_id': credential_id
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/credentials/<int:credential_id>/download-key', methods=['GET'])
+def download_credential_key(credential_id):
+    """Download the SSH private key for a credential"""
+    try:
+        credential = Credential.get_by_id(credential_id, include_secrets=True)
+        if not credential:
+            return jsonify({
+                'success': False,
+                'error': 'Credential not found'
+            }), 404
+
+        if not credential.get('ssh_private_key'):
+            return jsonify({
+                'success': False,
+                'error': 'This credential does not have an SSH private key'
+            }), 400
+
+        from flask import Response
+        response = Response(
+            credential['ssh_private_key'],
+            mimetype='application/x-pem-file'
+        )
+        response.headers['Content-Disposition'] = f'attachment; filename={credential["name"]}_id_key'
+        return response
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @bp.route('/api/providers')

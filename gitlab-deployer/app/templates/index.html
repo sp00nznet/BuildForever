@@ -95,6 +95,27 @@
 
                 </div>
 
+                <!-- Credentials Section -->
+                <div class="form-section credentials-section">
+                    <div class="section-header">
+                        <h2>VM/Container Credentials</h2>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="toggleCredentialModal()">Add Credential</button>
+                    </div>
+                    <p class="section-description">Credentials will be injected into all deployed VMs and containers (Windows, Linux, macOS).</p>
+
+                    <div class="form-group">
+                        <label for="deployCredential">Deploy With Credential:</label>
+                        <select id="deployCredential" name="deployCredential">
+                            <option value="">-- No credential (use defaults) --</option>
+                        </select>
+                        <small>Selected credential will be configured on all VMs/containers</small>
+                    </div>
+
+                    <div id="credentialsList" class="credentials-list">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+
                 <div class="form-section">
                     <h2>GitLab Server Configuration</h2>
                     <div class="form-group">
@@ -367,6 +388,120 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="toggleHistoryModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Credential Management Modal -->
+    <div id="credentialModal" class="modal" style="display: none;">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="credentialModalTitle">Add Credential</h3>
+                <button type="button" class="modal-close" onclick="toggleCredentialModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="credential-tabs">
+                    <button type="button" class="tab-btn active" onclick="showCredentialTab('manual')">Manual Entry</button>
+                    <button type="button" class="tab-btn" onclick="showCredentialTab('upload')">Upload Keys</button>
+                    <button type="button" class="tab-btn" onclick="showCredentialTab('generate')">Generate New</button>
+                </div>
+
+                <form id="credentialForm">
+                    <input type="hidden" id="credentialId" value="">
+
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label for="credentialName">Credential Name:</label>
+                            <input type="text" id="credentialName" placeholder="e.g., deploy-user" required>
+                            <small>A friendly name to identify this credential</small>
+                        </div>
+                        <div class="form-group half">
+                            <label for="credentialUsername">Username:</label>
+                            <input type="text" id="credentialUsername" placeholder="e.g., admin" required>
+                            <small>User account to create on VMs/containers</small>
+                        </div>
+                    </div>
+
+                    <!-- Manual Entry Tab -->
+                    <div id="credentialTabManual" class="credential-tab-content">
+                        <div class="form-group">
+                            <label for="credentialPassword">Password:</label>
+                            <input type="password" id="credentialPassword" placeholder="Enter password">
+                            <small>Password for Windows/Linux/macOS login</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="credentialPublicKey">SSH Public Key:</label>
+                            <textarea id="credentialPublicKey" rows="3" placeholder="ssh-ed25519 AAAA... user@host"></textarea>
+                            <small>Paste your public key for SSH access (Linux/macOS)</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="credentialPrivateKey">SSH Private Key (optional):</label>
+                            <textarea id="credentialPrivateKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                            <small>Optional: Store private key for automation</small>
+                        </div>
+                    </div>
+
+                    <!-- Upload Keys Tab -->
+                    <div id="credentialTabUpload" class="credential-tab-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="credentialPasswordUpload">Password:</label>
+                            <input type="password" id="credentialPasswordUpload" placeholder="Enter password (optional)">
+                            <small>Password for Windows login and sudo access</small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="publicKeyFile">Public Key File (.pub):</label>
+                                <input type="file" id="publicKeyFile" accept=".pub,.txt">
+                                <small>e.g., id_ed25519.pub, id_rsa.pub</small>
+                            </div>
+                            <div class="form-group half">
+                                <label for="privateKeyFile">Private Key File:</label>
+                                <input type="file" id="privateKeyFile" accept=".pem,.key,">
+                                <small>e.g., id_ed25519, id_rsa, key.pem</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Generate New Tab -->
+                    <div id="credentialTabGenerate" class="credential-tab-content" style="display: none;">
+                        <div class="form-group">
+                            <label for="credentialPasswordGenerate">Password:</label>
+                            <input type="password" id="credentialPasswordGenerate" placeholder="Enter password (optional)">
+                            <small>Password for Windows login and sudo access</small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="keyType">Key Type:</label>
+                                <select id="keyType">
+                                    <option value="ed25519" selected>Ed25519 (Recommended)</option>
+                                    <option value="rsa">RSA 4096</option>
+                                    <option value="ecdsa">ECDSA</option>
+                                </select>
+                            </div>
+                            <div class="form-group half">
+                                <label for="keyPassphrase">Key Passphrase (optional):</label>
+                                <input type="password" id="keyPassphrase" placeholder="Optional passphrase">
+                            </div>
+                        </div>
+                        <p class="info-text">A new SSH keypair will be generated and stored securely. You can download the private key after creation.</p>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="credentialDefault">
+                            Set as default credential
+                        </label>
+                        <small class="checkbox-help">Default credential is automatically selected for new deployments</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="toggleCredentialModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveCredential()">Save Credential</button>
             </div>
         </div>
     </div>

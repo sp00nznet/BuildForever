@@ -731,6 +731,178 @@ class ProxmoxClient:
 # Installation Scripts
 # =============================================================================
 
+# =============================================================================
+# Credential Injection Scripts
+# =============================================================================
+
+def get_linux_credential_script(username, password=None, ssh_public_key=None):
+    """Get a script to create a user account with password and/or SSH key on Linux."""
+    script = f'''#!/bin/bash
+set -e
+
+# Create user account
+useradd -m -s /bin/bash {username} || true
+
+# Add to sudo group
+usermod -aG sudo {username} || usermod -aG wheel {username} || true
+'''
+
+    if password:
+        script += f'''
+# Set password
+echo "{username}:{password}" | chpasswd
+'''
+
+    if ssh_public_key:
+        script += f'''
+# Setup SSH key
+mkdir -p /home/{username}/.ssh
+chmod 700 /home/{username}/.ssh
+echo "{ssh_public_key}" >> /home/{username}/.ssh/authorized_keys
+chmod 600 /home/{username}/.ssh/authorized_keys
+chown -R {username}:{username} /home/{username}/.ssh
+'''
+
+    script += f'''
+# Allow passwordless sudo
+echo "{username} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{username}
+chmod 440 /etc/sudoers.d/{username}
+
+echo "User {username} created successfully"
+'''
+    return script
+
+
+def get_windows_credential_script(username, password):
+    """Get a PowerShell script to create a user account on Windows."""
+    return f'''# PowerShell script to create Windows user account
+$ErrorActionPreference = "Stop"
+
+$username = "{username}"
+$password = ConvertTo-SecureString "{password}" -AsPlainText -Force
+
+# Check if user exists
+$userExists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+
+if (-not $userExists) {{
+    # Create new user
+    New-LocalUser -Name $username -Password $password -FullName "{username}" -Description "BuildForever deployment account"
+
+    # Add to Administrators group
+    Add-LocalGroupMember -Group "Administrators" -Member $username
+
+    Write-Host "User $username created successfully"
+}} else {{
+    # Update password
+    Set-LocalUser -Name $username -Password $password
+    Write-Host "User $username password updated"
+}}
+
+# Enable SSH if available (Windows Server 2019+)
+$sshFeature = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+if ($sshFeature -and $sshFeature.State -ne 'Installed') {{
+    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+    Start-Service sshd
+    Set-Service -Name sshd -StartupType Automatic
+}}
+
+Write-Host "Windows user setup complete"
+'''
+
+
+def get_windows_ssh_key_script(username, ssh_public_key):
+    """Get a PowerShell script to add SSH key to Windows user."""
+    return f'''# PowerShell script to add SSH key to Windows user
+$ErrorActionPreference = "Stop"
+
+$username = "{username}"
+$sshKey = "{ssh_public_key}"
+
+# Get user profile path
+$userProfile = (Get-CimInstance Win32_UserProfile | Where-Object {{ $_.LocalPath -like "*$username*" }}).LocalPath
+
+if (-not $userProfile) {{
+    $userProfile = "C:\\Users\\$username"
+}}
+
+# Create .ssh directory
+$sshDir = "$userProfile\\.ssh"
+if (-not (Test-Path $sshDir)) {{
+    New-Item -ItemType Directory -Path $sshDir -Force
+}}
+
+# Add key to authorized_keys
+$authorizedKeys = "$sshDir\\authorized_keys"
+Add-Content -Path $authorizedKeys -Value $sshKey
+
+# Set proper permissions (administrators only)
+$acl = Get-Acl $authorizedKeys
+$acl.SetAccessRuleProtection($true, $false)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators","FullControl","Allow")
+$acl.AddAccessRule($rule)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl","Allow")
+$acl.AddAccessRule($rule)
+Set-Acl -Path $authorizedKeys -AclObject $acl
+
+Write-Host "SSH key added for $username"
+'''
+
+
+def get_macos_credential_script(username, password=None, ssh_public_key=None):
+    """Get a script to create a user account on macOS."""
+    script = f'''#!/bin/bash
+set -e
+
+USERNAME="{username}"
+
+# Check if user exists
+if ! dscl . -read /Users/$USERNAME &>/dev/null; then
+    # Find next available UID
+    MAXID=$(dscl . -list /Users UniqueID | awk '{{print $2}}' | sort -ug | tail -1)
+    NEWID=$((MAXID+1))
+
+    # Create user
+    sudo dscl . -create /Users/$USERNAME
+    sudo dscl . -create /Users/$USERNAME UserShell /bin/zsh
+    sudo dscl . -create /Users/$USERNAME RealName "$USERNAME"
+    sudo dscl . -create /Users/$USERNAME UniqueID $NEWID
+    sudo dscl . -create /Users/$USERNAME PrimaryGroupID 20
+    sudo dscl . -create /Users/$USERNAME NFSHomeDirectory /Users/$USERNAME
+
+    # Create home directory
+    sudo createhomedir -c -u $USERNAME
+
+    echo "User $USERNAME created"
+fi
+'''
+
+    if password:
+        script += f'''
+# Set password
+sudo dscl . -passwd /Users/$USERNAME "{password}"
+'''
+
+    script += '''
+# Add to admin group
+sudo dscl . -append /Groups/admin GroupMembership $USERNAME
+'''
+
+    if ssh_public_key:
+        script += f'''
+# Setup SSH key
+sudo mkdir -p /Users/$USERNAME/.ssh
+sudo chmod 700 /Users/$USERNAME/.ssh
+echo "{ssh_public_key}" | sudo tee -a /Users/$USERNAME/.ssh/authorized_keys
+sudo chmod 600 /Users/$USERNAME/.ssh/authorized_keys
+sudo chown -R $USERNAME:staff /Users/$USERNAME/.ssh
+'''
+
+    script += '''
+echo "macOS user setup complete"
+'''
+    return script
+
+
 def get_gitlab_install_script(domain, admin_password, letsencrypt_email=None):
     """Get GitLab installation script."""
     external_url = f'https://{domain}' if letsencrypt_email else f'http://{domain}'
