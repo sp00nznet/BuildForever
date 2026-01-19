@@ -11,6 +11,38 @@ from .models import SavedConfig, DeploymentHistory, SSHKey, Credential, init_db
 bp = Blueprint('main', __name__)
 
 
+def check_gitlab_server(url, timeout=10):
+    """Check if a GitLab server is accessible and responding"""
+    import requests
+    try:
+        # Try to access GitLab's health endpoint
+        health_url = f"{url.rstrip('/')}/api/v4/version"
+        response = requests.get(health_url, timeout=timeout, verify=False)
+        if response.status_code == 200:
+            version_data = response.json()
+            return True, f"GitLab {version_data.get('version', 'unknown')} detected"
+        elif response.status_code == 401:
+            # Unauthorized but server is responding
+            return True, "GitLab server detected (authentication required)"
+        else:
+            return False, f"Server responded with status {response.status_code}"
+    except requests.exceptions.SSLError:
+        # SSL error but server exists - try without verification
+        try:
+            response = requests.get(f"{url.rstrip('/')}/api/v4/version", timeout=timeout, verify=False)
+            if response.status_code in [200, 401]:
+                return True, "GitLab server detected (SSL verification disabled)"
+        except:
+            pass
+        return False, "SSL error - server may not be GitLab"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection refused - server not accessible"
+    except requests.exceptions.Timeout:
+        return False, "Connection timeout - server not responding"
+    except Exception as e:
+        return False, f"Error: {str(e)}"
+
+
 def no_cache(f):
     """Decorator to add no-cache headers to responses"""
     @wraps(f)
@@ -54,8 +86,27 @@ def deploy():
     """Handle GitLab + Runners deployment request"""
     data = request.json
 
-    # Validate required fields
-    required_fields = ['domain', 'admin_password', 'email']
+    # Check if GitLab deployment is requested
+    deploy_gitlab = data.get('deploy_gitlab', True)
+    gitlab_url = data.get('gitlab_url', '')
+
+    # Validate required fields based on deployment mode
+    if deploy_gitlab:
+        required_fields = ['domain', 'admin_password', 'email']
+    else:
+        # If not deploying GitLab, we need either an existing GitLab URL or just runners
+        required_fields = []
+        if gitlab_url:
+            # Validate GitLab URL format
+            if not gitlab_url.startswith(('http://', 'https://')):
+                return jsonify({
+                    'success': False,
+                    'error': 'GitLab URL must start with http:// or https://'
+                }), 400
+        # For runners-only deployment, domain is used for identification only
+        if not data.get('domain'):
+            data['domain'] = f"runners-{int(time.time())}"
+
     missing_fields = [field for field in required_fields if not data.get(field)]
 
     if missing_fields:
@@ -65,6 +116,13 @@ def deploy():
         }), 400
 
     runners = data.get('runners', [])
+
+    # Validate at least one runner is selected
+    if not runners:
+        return jsonify({
+            'success': False,
+            'error': 'At least one runner must be selected'
+        }), 400
 
     # Validate runners
     invalid_runners = [r for r in runners if r not in SUPPORTED_RUNNERS]
@@ -98,8 +156,8 @@ def deploy():
     # Save deployment configuration
     config = {
         'domain': data['domain'],
-        'admin_password': data['admin_password'],
-        'email': data['email'],
+        'admin_password': data.get('admin_password', ''),
+        'email': data.get('email', ''),
         'letsencrypt_enabled': data.get('letsencrypt_enabled', True),
         'runners': runners,
         # Provider settings
@@ -112,7 +170,18 @@ def deploy():
         # Traefik settings
         'traefik_enabled': data.get('traefik_enabled', False),
         'base_domain': data.get('base_domain', ''),
-        'traefik_dashboard': data.get('traefik_dashboard', True)
+        'traefik_dashboard': data.get('traefik_dashboard', True),
+        # GitLab deployment settings
+        'deploy_gitlab': deploy_gitlab,
+        'gitlab_url': gitlab_url,
+        # Shared storage settings
+        'nfs_share': data.get('nfs_share', ''),
+        'nfs_mount_path': data.get('nfs_mount_path', '/mnt/shared'),
+        'samba_share': data.get('samba_share', ''),
+        'samba_mount_path': data.get('samba_mount_path', '/mnt/samba'),
+        'samba_username': data.get('samba_username', ''),
+        'samba_password': data.get('samba_password', ''),
+        'samba_domain': data.get('samba_domain', '')
     }
 
     # Save config to file for deployment script
@@ -127,38 +196,94 @@ def deploy():
     deployment_steps = []
 
     # Add Traefik deployment step if enabled
-    if config['traefik_enabled']:
+    if config['traefik_enabled'] and deploy_gitlab:
         deployment_steps.append('Deploy Traefik Reverse Proxy')
         deployment_steps.append('Configure Traefik SSL certificates')
 
-    deployment_steps.extend([
-        'Deploy GitLab Server',
-        'Configure SSL with Let\'s Encrypt' if config['letsencrypt_enabled'] and not config['traefik_enabled'] else 'Configure GitLab',
-        'Wait for GitLab initialization',
-        'Obtain runner registration token'
-    ])
+    # Add GitLab deployment steps if requested
+    if deploy_gitlab:
+        deployment_steps.extend([
+            'Deploy GitLab Server',
+            'Configure SSL with Let\'s Encrypt' if config['letsencrypt_enabled'] and not config['traefik_enabled'] else 'Configure GitLab',
+            'Wait for GitLab initialization',
+            'Obtain runner registration token'
+        ])
+    elif gitlab_url:
+        deployment_steps.extend([
+            'Verify GitLab server accessibility',
+            'Obtain runner registration token from existing GitLab'
+        ])
+    else:
+        deployment_steps.append('Deploy runners without GitLab registration')
+
+    # Add shared storage mounting steps
+    if config.get('nfs_share'):
+        deployment_steps.append('Configure NFS shared storage on all instances')
+    if config.get('samba_share'):
+        deployment_steps.append('Configure Samba/CIFS shared storage on all instances')
 
     for runner_id in runners:
         runner_name = SUPPORTED_RUNNERS[runner_id]['name']
         deployment_steps.append(f'Deploy {runner_name} runner')
-        deployment_steps.append(f'Register {runner_name} runner to GitLab')
+        if deploy_gitlab or gitlab_url:
+            deployment_steps.append(f'Register {runner_name} runner to GitLab')
 
-    deployment_steps.append('Verify all runners are connected')
+    if deploy_gitlab or gitlab_url:
+        deployment_steps.append('Verify all runners are connected')
     deployment_steps.append('Deployment complete')
 
     # Store in session for status tracking
     session['deployment_id'] = data['domain']
     session['deployment_steps'] = deployment_steps
 
+    # Generate deployment message
+    if deploy_gitlab:
+        message = f'Deployment plan created: GitLab Server + {len(runners)} runner(s)'
+        estimated_time = f'{15 + len(runners) * 5}-{30 + len(runners) * 10} minutes'
+    elif gitlab_url:
+        message = f'Deployment plan created: {len(runners)} runner(s) connecting to existing GitLab'
+        estimated_time = f'{5 + len(runners) * 5}-{10 + len(runners) * 10} minutes'
+    else:
+        message = f'Deployment plan created: {len(runners)} standalone runner(s)'
+        estimated_time = f'{5 + len(runners) * 5}-{10 + len(runners) * 10} minutes'
+
     return jsonify({
         'success': True,
-        'message': f'Deployment plan created: GitLab Server + {len(runners)} runner(s)',
+        'message': message,
         'deployment_id': data['domain'],
         'deployment_plan': {
             'steps': deployment_steps,
-            'estimated_time': f'{15 + len(runners) * 5}-{30 + len(runners) * 10} minutes'
+            'estimated_time': estimated_time
         }
     })
+
+
+@bp.route('/api/test-gitlab', methods=['POST'])
+def test_gitlab():
+    """Test connectivity to an existing GitLab server"""
+    data = request.json
+    gitlab_url = data.get('gitlab_url', '')
+
+    if not gitlab_url:
+        return jsonify({
+            'success': False,
+            'error': 'GitLab URL is required'
+        }), 400
+
+    if not gitlab_url.startswith(('http://', 'https://')):
+        return jsonify({
+            'success': False,
+            'error': 'GitLab URL must start with http:// or https://'
+        }), 400
+
+    is_accessible, message = check_gitlab_server(gitlab_url)
+
+    return jsonify({
+        'success': is_accessible,
+        'message': message,
+        'gitlab_url': gitlab_url
+    })
+
 
 @bp.route('/api/execute-deployment', methods=['POST'])
 def execute_deployment():
@@ -321,6 +446,21 @@ def execute_proxmox_deployment(config, deployment_id):
         admin_password = config.get('admin_password', 'changeme')
         email = config.get('email', '')
 
+        # Get GitLab deployment settings
+        deploy_gitlab = config.get('deploy_gitlab', True)
+        gitlab_url = config.get('gitlab_url', '')
+
+        # Get shared storage configuration
+        storage_config = {
+            'nfs_share': config.get('nfs_share', ''),
+            'nfs_mount_path': config.get('nfs_mount_path', '/mnt/shared'),
+            'samba_share': config.get('samba_share', ''),
+            'samba_mount_path': config.get('samba_mount_path', '/mnt/samba'),
+            'samba_username': config.get('samba_username', ''),
+            'samba_password': config.get('samba_password', ''),
+            'samba_domain': config.get('samba_domain', '')
+        }
+
         # Get deployment credential if specified
         deploy_credential = None
         credential_id = config.get('credential_id')
@@ -357,10 +497,22 @@ def execute_proxmox_deployment(config, deployment_id):
         created = []
         errors = []
 
+        # Determine GitLab URL based on deployment mode
+        if not deploy_gitlab and gitlab_url:
+            # Use existing GitLab server
+            final_gitlab_url = gitlab_url
+        elif deploy_gitlab:
+            # Will deploy GitLab, construct URL
+            final_gitlab_url = f'https://{domain}'
+        else:
+            # No GitLab (standalone runners)
+            final_gitlab_url = None
+
         # =====================================================================
-        # Step 1: Create GitLab Server (LXC Container)
+        # Step 1: Create GitLab Server (LXC Container) - Only if deploy_gitlab is True
         # =====================================================================
-        try:
+        if deploy_gitlab:
+          try:
             gitlab_vmid = client.get_next_vmid()
 
             # Check for Debian template, download if needed
@@ -429,7 +581,8 @@ def execute_proxmox_deployment(config, deployment_id):
                         script = get_gitlab_install_script(
                             domain=domain,
                             admin_password=admin_password,
-                            letsencrypt_email=email if config.get('letsencrypt_enabled') else None
+                            letsencrypt_email=email if config.get('letsencrypt_enabled') else None,
+                            storage_config=storage_config
                         )
                         prov_result = client.provision_container(selected_node, gitlab_vmid, script)
                         # Update status (would need proper status tracking)
@@ -442,13 +595,12 @@ def execute_proxmox_deployment(config, deployment_id):
             else:
                 errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
 
-        except Exception as e:
+          except Exception as e:
             errors.append(f'GitLab Server: {str(e)}')
 
         # =====================================================================
         # Step 2: Create Runner VMs/Containers
         # =====================================================================
-        gitlab_url = f'https://{domain}'
 
         for runner in runners:
             try:
@@ -510,7 +662,12 @@ def execute_proxmox_deployment(config, deployment_id):
 
                                 # Then install runner
                                 # Note: registration_token would come from GitLab API after it's running
-                                script = get_runner_install_script(rtype, gitlab_url, 'REGISTRATION_TOKEN')
+                                script = get_runner_install_script(
+                                    rtype,
+                                    final_gitlab_url if final_gitlab_url else '',
+                                    'REGISTRATION_TOKEN' if final_gitlab_url else '',
+                                    storage_config
+                                )
                                 client.provision_container(selected_node, vmid, script)
 
                         thread = threading.Thread(

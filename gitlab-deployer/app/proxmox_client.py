@@ -1535,9 +1535,23 @@ echo "macOS user setup complete"
     return script
 
 
-def get_gitlab_install_script(domain, admin_password, letsencrypt_email=None):
+def get_gitlab_install_script(domain, admin_password, letsencrypt_email=None, storage_config=None):
     """Get GitLab installation script."""
+    storage_config = storage_config or {}
     external_url = f'https://{domain}' if letsencrypt_email else f'http://{domain}'
+
+    # Add shared storage mounting
+    nfs_mount = get_nfs_mount_script_linux(
+        storage_config.get('nfs_share', ''),
+        storage_config.get('nfs_mount_path', '/mnt/shared')
+    )
+    samba_mount = get_samba_mount_script_linux(
+        storage_config.get('samba_share', ''),
+        storage_config.get('samba_mount_path', '/mnt/samba'),
+        storage_config.get('samba_username', ''),
+        storage_config.get('samba_password', ''),
+        storage_config.get('samba_domain', '')
+    )
 
     script = f'''#!/bin/bash
 set -e
@@ -1545,7 +1559,8 @@ set -e
 # Update system
 apt-get update
 apt-get install -y curl openssh-server ca-certificates tzdata perl
-
+{nfs_mount}
+{samba_mount}
 # Add GitLab repository
 curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
 
@@ -1573,21 +1588,24 @@ echo "GitLab installation complete!"
     return script
 
 
-def get_runner_install_script(runner_type, gitlab_url, registration_token):
+def get_runner_install_script(runner_type, gitlab_url, registration_token, storage_config=None):
     """Get GitLab runner installation script based on runner type."""
+    storage_config = storage_config or {}
 
     if runner_type in ['debian', 'ubuntu', 'rocky', 'arch']:
-        return get_linux_runner_script(runner_type, gitlab_url, registration_token)
+        return get_linux_runner_script(runner_type, gitlab_url, registration_token, storage_config)
     elif runner_type.startswith('windows'):
-        return get_windows_runner_script(gitlab_url, registration_token)
+        return get_windows_runner_script(gitlab_url, registration_token, storage_config)
     elif runner_type == 'macos':
-        return get_macos_runner_script(gitlab_url, registration_token)
+        return get_macos_runner_script(gitlab_url, registration_token, storage_config)
     else:
         return None
 
 
-def get_linux_runner_script(distro, gitlab_url, registration_token):
+def get_linux_runner_script(distro, gitlab_url, registration_token, storage_config=None):
     """Get Linux runner installation script."""
+    storage_config = storage_config or {}
+
     # Determine package manager and qemu-guest-agent package name
     if distro in ['debian', 'ubuntu']:
         install_qemu_ga = '''
@@ -1639,14 +1657,23 @@ curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/s
 apt-get install -y gitlab-runner
 '''
 
-    return f'''#!/bin/bash
-set -e
-{install_qemu_ga}
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-systemctl enable docker
-systemctl start docker
-{install_runner}
+    # Add shared storage mounting
+    nfs_mount = get_nfs_mount_script_linux(
+        storage_config.get('nfs_share', ''),
+        storage_config.get('nfs_mount_path', '/mnt/shared')
+    )
+    samba_mount = get_samba_mount_script_linux(
+        storage_config.get('samba_share', ''),
+        storage_config.get('samba_mount_path', '/mnt/samba'),
+        storage_config.get('samba_username', ''),
+        storage_config.get('samba_password', ''),
+        storage_config.get('samba_domain', '')
+    )
+
+    # Only register if gitlab_url is provided
+    register_section = ''
+    if gitlab_url and registration_token:
+        register_section = f'''
 # Register runner
 gitlab-runner register \\
     --non-interactive \\
@@ -1661,22 +1688,44 @@ gitlab-runner register \\
 
 # Start runner
 gitlab-runner start
+'''
 
+    return f'''#!/bin/bash
+set -e
+{install_qemu_ga}
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+systemctl enable docker
+systemctl start docker
+{nfs_mount}
+{samba_mount}
+{install_runner}
+{register_section}
 echo "GitLab Runner ({distro}) installation complete!"
 '''
 
 
-def get_windows_runner_script(gitlab_url, registration_token):
+def get_windows_runner_script(gitlab_url, registration_token, storage_config=None):
     """Get Windows runner installation script (PowerShell)."""
-    return f'''# PowerShell script for Windows GitLab Runner installation
-$ErrorActionPreference = "Stop"
+    storage_config = storage_config or {}
 
-# Create runner directory
-New-Item -ItemType Directory -Force -Path C:\\GitLab-Runner
+    # Add shared storage mounting
+    nfs_mount = get_nfs_mount_script_windows(
+        storage_config.get('nfs_share', ''),
+        storage_config.get('nfs_mount_path', 'N:')
+    )
+    samba_mount = get_samba_mount_script_windows(
+        storage_config.get('samba_share', ''),
+        storage_config.get('samba_mount_path', 'S:'),
+        storage_config.get('samba_username', ''),
+        storage_config.get('samba_password', ''),
+        storage_config.get('samba_domain', '')
+    )
 
-# Download runner
-Invoke-WebRequest -Uri "https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe" -OutFile "C:\\GitLab-Runner\\gitlab-runner.exe"
-
+    # Only register if gitlab_url is provided
+    register_section = ''
+    if gitlab_url and registration_token:
+        register_section = f'''
 # Register runner
 cd C:\\GitLab-Runner
 .\\gitlab-runner.exe register `
@@ -1692,24 +1741,52 @@ cd C:\\GitLab-Runner
 # Install as service
 .\\gitlab-runner.exe install
 .\\gitlab-runner.exe start
+'''
 
+    return f'''# PowerShell script for Windows GitLab Runner installation
+$ErrorActionPreference = "Stop"
+
+# Create runner directory
+New-Item -ItemType Directory -Force -Path C:\\GitLab-Runner
+
+# Download runner
+Invoke-WebRequest -Uri "https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe" -OutFile "C:\\GitLab-Runner\\gitlab-runner.exe"
+{nfs_mount}
+{samba_mount}
+{register_section}
 Write-Host "GitLab Runner (Windows) installation complete!"
 '''
 
 
-def get_macos_runner_script(gitlab_url, registration_token):
+def get_macos_runner_script(gitlab_url, registration_token, storage_config=None):
     """Get macOS runner installation script."""
-    return f'''#!/bin/bash
-set -e
+    storage_config = storage_config or {}
 
-# Install Homebrew if not present
-if ! command -v brew &> /dev/null; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
+    # Add shared storage mounting (NFS only for macOS, Samba via smb://)
+    nfs_mount = ''
+    if storage_config.get('nfs_share'):
+        nfs_share = storage_config.get('nfs_share', '')
+        nfs_mount_path = storage_config.get('nfs_mount_path', '/Volumes/NFSShare')
+        nfs_mount = f'''
+# Configure NFS shared storage
+echo "Setting up NFS share..."
+mkdir -p {nfs_mount_path}
+mount -t nfs {nfs_share} {nfs_mount_path}
+echo "NFS share mounted at {nfs_mount_path}"
+'''
 
-# Install GitLab Runner
-brew install gitlab-runner
+    samba_mount = get_samba_mount_script_macos(
+        storage_config.get('samba_share', ''),
+        storage_config.get('samba_mount_path', '/Volumes/Shared'),
+        storage_config.get('samba_username', ''),
+        storage_config.get('samba_password', ''),
+        storage_config.get('samba_domain', '')
+    )
 
+    # Only register if gitlab_url is provided
+    register_section = ''
+    if gitlab_url and registration_token:
+        register_section = f'''
 # Register runner
 gitlab-runner register \\
     --non-interactive \\
@@ -1721,14 +1798,152 @@ gitlab-runner register \\
     --run-untagged="true" \\
     --locked="false"
 
+# Start runner as service
+brew services start gitlab-runner
+'''
+
+    return f'''#!/bin/bash
+set -e
+
+# Install Homebrew if not present
+if ! command -v brew &> /dev/null; then
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+
+# Install GitLab Runner
+brew install gitlab-runner
+{nfs_mount}
+{samba_mount}
+{register_section}
 # Install Xcode command line tools
 xcode-select --install 2>/dev/null || true
 
 # Install common build tools
 brew install cocoapods fastlane
 
-# Start runner as service
-brew services start gitlab-runner
-
 echo "GitLab Runner (macOS) installation complete!"
+'''
+
+
+def get_nfs_mount_script_linux(nfs_share, mount_path='/mnt/shared'):
+    """Generate NFS mounting script for Linux systems."""
+    if not nfs_share:
+        return ''
+
+    return f'''
+# Configure NFS shared storage
+echo "Setting up NFS share..."
+apt-get install -y nfs-common || dnf install -y nfs-utils || pacman -Sy --noconfirm nfs-utils
+mkdir -p {mount_path}
+echo "{nfs_share} {mount_path} nfs defaults,_netdev 0 0" >> /etc/fstab
+mount -a
+echo "NFS share mounted at {mount_path}"
+'''
+
+
+def get_samba_mount_script_linux(samba_share, mount_path='/mnt/samba', username='', password='', domain=''):
+    """Generate Samba/CIFS mounting script for Linux systems."""
+    if not samba_share:
+        return ''
+
+    credentials_setup = ''
+    mount_options = 'defaults,_netdev'
+
+    if username and password:
+        credentials_setup = f'''
+# Create credentials file for Samba
+cat > /root/.smbcredentials << 'EOF'
+username={username}
+password={password}
+'''
+        if domain:
+            credentials_setup += f'domain={domain}\n'
+        credentials_setup += '''EOF
+chmod 600 /root/.smbcredentials
+'''
+        mount_options = 'credentials=/root/.smbcredentials,_netdev'
+
+    return f'''
+# Configure Samba/CIFS shared storage
+echo "Setting up Samba share..."
+apt-get install -y cifs-utils || dnf install -y cifs-utils || pacman -Sy --noconfirm cifs-utils
+mkdir -p {mount_path}
+{credentials_setup}
+echo "//{samba_share} {mount_path} cifs {mount_options} 0 0" >> /etc/fstab
+mount -a
+echo "Samba share mounted at {mount_path}"
+'''
+
+
+def get_nfs_mount_script_windows(nfs_share, mount_path='N:'):
+    """Generate NFS mounting script for Windows systems (PowerShell)."""
+    if not nfs_share:
+        return ''
+
+    # Extract server and path from NFS share (format: server:/path)
+    if ':' in nfs_share:
+        server, path = nfs_share.split(':', 1)
+    else:
+        server = nfs_share
+        path = '/'
+
+    return f'''
+# Configure NFS shared storage
+Write-Host "Setting up NFS share..."
+Install-WindowsFeature -Name NFS-Client -ErrorAction SilentlyContinue
+$nfsDrive = "{mount_path}"
+$nfsPath = "\\\\{server}\\{path.replace('/', '\\')}"
+New-PSDrive -Name ($nfsDrive.TrimEnd(':')) -PSProvider FileSystem -Root $nfsPath -Persist -ErrorAction SilentlyContinue
+Write-Host "NFS share mounted at $nfsDrive"
+'''
+
+
+def get_samba_mount_script_windows(samba_share, mount_path='S:', username='', password='', domain=''):
+    """Generate Samba/CIFS mounting script for Windows systems (PowerShell)."""
+    if not samba_share:
+        return ''
+
+    credential_param = ''
+    if username and password:
+        if domain:
+            username = f"{domain}\\{username}"
+        credential_param = f'''
+$secPassword = ConvertTo-SecureString "{password}" -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential("{username}", $secPassword)
+New-PSDrive -Name ($sambaDrive.TrimEnd(':')) -PSProvider FileSystem -Root $sambaPath -Credential $credential -Persist
+'''
+    else:
+        credential_param = f'New-PSDrive -Name ($sambaDrive.TrimEnd(\':\')) -PSProvider FileSystem -Root $sambaPath -Persist'
+
+    return f'''
+# Configure Samba/CIFS shared storage
+Write-Host "Setting up Samba share..."
+$sambaDrive = "{mount_path}"
+$sambaPath = "\\\\{samba_share}"
+{credential_param}
+Write-Host "Samba share mounted at $sambaDrive"
+'''
+
+
+def get_samba_mount_script_macos(samba_share, mount_path='/Volumes/Shared', username='', password='', domain=''):
+    """Generate Samba/CIFS mounting script for macOS systems."""
+    if not samba_share:
+        return ''
+
+    auth_param = ''
+    if username and password:
+        if domain:
+            auth_param = f"smb://{domain};{username}:{password}@{samba_share}"
+        else:
+            auth_param = f"smb://{username}:{password}@{samba_share}"
+    else:
+        auth_param = f"smb://{samba_share}"
+
+    return f'''
+# Configure Samba/CIFS shared storage
+echo "Setting up Samba share..."
+mkdir -p {mount_path}
+mount -t smbfs {auth_param} {mount_path}
+# Add to auto-mount (launchd would be needed for persistence)
+echo "Samba share mounted at {mount_path}"
 '''
