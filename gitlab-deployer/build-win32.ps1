@@ -20,9 +20,10 @@ if ($pythonExitCode -ne 0 -or $pythonVersion -match "was not found" -or $pythonV
     Write-Host "ERROR: Python is not installed or not in PATH" -ForegroundColor Red
     Write-Host ""
     Write-Host "Please install Python 3.8+ using one of these methods:" -ForegroundColor Yellow
-    Write-Host "  1. Microsoft Store: Search for 'Python 3.11'" -ForegroundColor White
-    Write-Host "  2. Download from: https://www.python.org/downloads/" -ForegroundColor White
-    Write-Host "  3. Or add Python to your PATH if already installed" -ForegroundColor White
+    Write-Host "  1. Winget:          winget install Python.Python.3.11" -ForegroundColor White
+    Write-Host "  2. Microsoft Store: Search for 'Python 3.11'" -ForegroundColor White
+    Write-Host "  3. Download from:   https://www.python.org/downloads/" -ForegroundColor White
+    Write-Host "  4. Or add Python to your PATH if already installed" -ForegroundColor White
     Write-Host ""
     Write-Host "After installing, restart your terminal and try again." -ForegroundColor Yellow
     Write-Host ""
