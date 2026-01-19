@@ -1546,11 +1546,6 @@ set -e
 apt-get update
 apt-get install -y curl openssh-server ca-certificates tzdata perl
 
-# Install QEMU Guest Agent for Proxmox integration
-apt-get install -y qemu-guest-agent
-systemctl enable qemu-guest-agent
-systemctl start qemu-guest-agent
-
 # Add GitLab repository
 curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
 
