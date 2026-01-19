@@ -409,36 +409,50 @@ def execute_proxmox_deployment(config, deployment_id):
                     'resources': '4 CPU, 8GB RAM, 50GB disk'
                 })
 
-                # Get container IP
+                # Get container IP (for display purposes)
                 gitlab_ip = client.get_container_ip(selected_node, gitlab_vmid)
                 if gitlab_ip:
                     created[-1]['ip'] = gitlab_ip
 
-                    # Start provisioning in background
-                    def provision_gitlab():
+                # Start provisioning in background - always run, pct exec uses VMID not IP
+                def provision_gitlab():
+                    try:
+                        print(f"[PROVISION] Starting GitLab provisioning for VMID {gitlab_vmid}...")
+
                         # First inject credentials if specified
                         if deploy_credential:
+                            print(f"[PROVISION] Injecting credentials for user {deploy_credential['username']}...")
                             cred_script = get_linux_credential_script(
                                 username=deploy_credential['username'],
                                 password=deploy_credential.get('password'),
                                 ssh_public_key=deploy_credential.get('ssh_public_key')
                             )
-                            client.provision_container(selected_node, gitlab_vmid, cred_script)
+                            cred_result = client.provision_container(selected_node, gitlab_vmid, cred_script)
+                            if not cred_result.get('success'):
+                                print(f"[PROVISION] Credential injection failed: {cred_result.get('error')}")
+                            else:
+                                print(f"[PROVISION] Credentials injected successfully")
 
                         # Then install GitLab
+                        print(f"[PROVISION] Installing GitLab (this may take 10-15 minutes)...")
                         script = get_gitlab_install_script(
                             domain=domain,
                             admin_password=admin_password,
                             letsencrypt_email=email if config.get('letsencrypt_enabled') else None
                         )
                         prov_result = client.provision_container(selected_node, gitlab_vmid, script)
-                        # Update status (would need proper status tracking)
+                        if prov_result.get('success'):
+                            print(f"[PROVISION] GitLab installation COMPLETE for VMID {gitlab_vmid}")
+                        else:
+                            print(f"[PROVISION] GitLab installation FAILED: {prov_result.get('error')}")
+                    except Exception as e:
+                        print(f"[PROVISION] GitLab provisioning EXCEPTION: {str(e)}")
 
-                    thread = threading.Thread(target=provision_gitlab, daemon=True)
-                    thread.start()
-                    created[-1]['status'] = 'provisioning'
-                    if deploy_credential:
-                        created[-1]['credential'] = deploy_credential['name']
+                thread = threading.Thread(target=provision_gitlab, daemon=True)
+                thread.start()
+                created[-1]['status'] = 'provisioning'
+                if deploy_credential:
+                    created[-1]['credential'] = deploy_credential['name']
             else:
                 errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
 

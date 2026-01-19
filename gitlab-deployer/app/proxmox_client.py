@@ -1201,15 +1201,25 @@ echo GitLab Runner installation complete!
         This method SSH's to the Proxmox host and uses 'pct exec' to run commands
         inside the container, avoiding the need for SSH inside the container itself.
         """
+        print(f"[SSH] Starting provision for container {vmid} on node {node}")
+
+        # Check if we have a password for SSH
+        if not self.password:
+            error_msg = "No password configured for SSH to Proxmox host. Provisioning requires root SSH access."
+            print(f"[SSH] ERROR: {error_msg}")
+            return {'success': False, 'error': error_msg}
+
         # Wait for container to be running
+        print(f"[SSH] Waiting for container {vmid} to be running...")
         start_time = time.time()
         while time.time() - start_time < 60:
             try:
                 status = self.proxmox.nodes(node).lxc(vmid).status.current.get()
                 if status.get('status') == 'running':
+                    print(f"[SSH] Container {vmid} is running")
                     break
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[SSH] Error checking container status: {e}")
             time.sleep(3)
 
         # SSH to Proxmox host and use pct exec
@@ -1218,18 +1228,21 @@ echo GitLab Runner installation complete!
 
         try:
             # Connect to Proxmox host
+            print(f"[SSH] Connecting to {self.host} as root...")
             ssh.connect(
                 self.host,
                 username='root',
                 password=self.password,
                 timeout=30
             )
+            print(f"[SSH] Connected successfully")
 
             # Base64 encode the script and pipe it to bash inside the container
             script_b64 = base64.b64encode(script.encode()).decode()
 
             # Use pct exec to run bash, piping the decoded script to it
             exec_cmd = f'echo "{script_b64}" | base64 -d | pct exec {vmid} -- bash -s'
+            print(f"[SSH] Executing pct exec {vmid}...")
 
             stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
@@ -1239,11 +1252,22 @@ echo GitLab Runner installation complete!
             ssh.close()
 
             if exit_code == 0:
+                print(f"[SSH] Command completed successfully for container {vmid}")
                 return {'success': True, 'output': output}
             else:
+                print(f"[SSH] Command failed with exit code {exit_code}: {errors or output}")
                 return {'success': False, 'error': errors or output, 'exit_code': exit_code}
 
+        except paramiko.AuthenticationException as e:
+            print(f"[SSH] Authentication FAILED - check Proxmox root password: {e}")
+            try:
+                ssh.close()
+            except Exception:
+                pass
+            return {'success': False, 'error': f'SSH authentication failed - verify Proxmox root password: {str(e)}'}
+
         except Exception as e:
+            print(f"[SSH] Connection/execution FAILED: {e}")
             try:
                 ssh.close()
             except Exception:
