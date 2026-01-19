@@ -1311,26 +1311,26 @@ echo GitLab Runner installation complete!
                     '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
                 ])
             })
-        # Windows-specific configuration
+        # Windows-specific configuration - always use UEFI for GPT disk compatibility
         elif is_windows:
-            # Windows 11 and Server 2025 require UEFI + TPM
-            needs_uefi_tpm = windows_version in ['windows-11', 'windows-server-2025']
+            # Windows 11 and Server 2025 require TPM 2.0
+            needs_tpm = windows_version in ['windows-11', 'windows-server-2025']
 
-            if needs_uefi_tpm:
+            # All Windows versions use UEFI (OVMF) for GPT partition compatibility
+            params.update({
+                'bios': 'ovmf',
+                'machine': 'q35',
+                'efidisk0': f'{storage}:1',
+            })
+
+            if needs_tpm:
                 params.update({
-                    'bios': 'ovmf',
-                    'machine': 'q35',
                     'ostype': 'win11',
-                    'efidisk0': f'{storage}:1',
                     'tpmstate0': f'{storage}:1,version=v2.0',
                 })
             else:
-                # Windows 10 and Server 2022 - use SeaBIOS for better ISO compatibility
-                params.update({
-                    'bios': 'seabios',
-                    'machine': 'pc',
-                    'ostype': 'win10',
-                })
+                # Windows 10 and Server 2022 - UEFI but no TPM required
+                params['ostype'] = 'win10'
         else:
             params['bios'] = bios
             params['machine'] = machine
@@ -1545,11 +1545,6 @@ set -e
 # Update system
 apt-get update
 apt-get install -y curl openssh-server ca-certificates tzdata perl
-
-# Install QEMU Guest Agent for Proxmox integration
-apt-get install -y qemu-guest-agent
-systemctl enable qemu-guest-agent
-systemctl start qemu-guest-agent
 
 # Add GitLab repository
 curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
