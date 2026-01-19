@@ -199,11 +199,61 @@
                     </div>
                 </div>
 
+                <!-- GitLab Deployment Mode Section -->
                 <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> GitLab Deployment Mode</h2>
+                    </div>
+                    <div class="section-content">
+                        <p class="section-description">Choose how to deploy GitLab - create a new instance, connect to an existing server, or deploy runners only.</p>
+
+                        <div class="form-group">
+                            <label>Deployment Mode:</label>
+                            <div class="radio-group">
+                                <label class="radio-option">
+                                    <input type="radio" name="gitlabMode" value="new" checked onchange="updateGitLabModeVisibility()">
+                                    <span class="radio-label">
+                                        <strong>Deploy New GitLab Server</strong>
+                                        <small>Create a new GitLab instance with runners</small>
+                                    </span>
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="gitlabMode" value="existing" onchange="updateGitLabModeVisibility()">
+                                    <span class="radio-label">
+                                        <strong>Use Existing GitLab Server</strong>
+                                        <small>Connect runners to an external GitLab instance</small>
+                                    </span>
+                                </label>
+                                <label class="radio-option">
+                                    <input type="radio" name="gitlabMode" value="none" onchange="updateGitLabModeVisibility()">
+                                    <span class="radio-label">
+                                        <strong>Runners Only (No GitLab)</strong>
+                                        <small>Deploy standalone runners without GitLab registration</small>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Existing GitLab Server URL (shown when mode is 'existing') -->
+                        <div id="existingGitLabConfig" class="conditional-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="gitlabUrl">Existing GitLab Server URL:</label>
+                                <input type="url" id="gitlabUrl" name="gitlabUrl" placeholder="https://gitlab.example.com">
+                                <small>The URL of your existing GitLab server</small>
+                            </div>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="testExistingGitLab()">Test Connection</button>
+                            <div id="gitlabTestResult" class="test-result" style="display: none;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section collapsible" id="gitlabServerConfigSection">
                     <div class="section-header clickable" onclick="toggleSection(this)">
                         <h2><span class="collapse-icon">&#9660;</span> GitLab Server Configuration</h2>
                     </div>
                     <div class="section-content">
+                        <p class="section-description">Configure your new GitLab server deployment.</p>
+
                         <div class="form-group">
                             <label for="domain">GitLab Domain:</label>
                             <input type="text" id="domain" name="domain" placeholder="gitlab.example.com" required>
@@ -255,6 +305,81 @@
                                     Enable Traefik Dashboard
                                 </label>
                                 <small class="checkbox-help">Web UI for monitoring at traefik.yourdomain.com</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Shared Storage Configuration Section -->
+                <div class="form-section collapsible collapsed">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9658;</span> Shared Storage (Optional)</h2>
+                    </div>
+                    <div class="section-content" style="display: none;">
+                        <p class="section-description">Configure NFS or Samba/CIFS shared storage that will be automatically mounted on all GitLab and runner instances. This is optional but useful for sharing build artifacts and caches.</p>
+
+                        <!-- NFS Configuration -->
+                        <div class="storage-subsection">
+                            <h4>NFS (Network File System)</h4>
+                            <div class="form-group checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="enableNfs" name="enableNfs" onchange="toggleNfsConfig()">
+                                    Enable NFS Shared Storage
+                                </label>
+                            </div>
+
+                            <div id="nfsConfig" class="conditional-options" style="display: none;">
+                                <div class="form-group">
+                                    <label for="nfsShare">NFS Share:</label>
+                                    <input type="text" id="nfsShare" name="nfsShare" placeholder="192.168.1.100:/export/shared">
+                                    <small>Format: server:/path (e.g., 192.168.1.100:/export/shared or nfs.example.com:/data)</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="nfsMountPath">Mount Path:</label>
+                                    <input type="text" id="nfsMountPath" name="nfsMountPath" placeholder="/mnt/shared" value="/mnt/shared">
+                                    <small>Where to mount the NFS share on each instance</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Samba/CIFS Configuration -->
+                        <div class="storage-subsection" style="border-top: 1px solid #ddd; margin-top: 20px; padding-top: 20px;">
+                            <h4>Samba/CIFS (Windows File Sharing)</h4>
+                            <div class="form-group checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="enableSamba" name="enableSamba" onchange="toggleSambaConfig()">
+                                    Enable Samba/CIFS Shared Storage
+                                </label>
+                            </div>
+
+                            <div id="sambaConfig" class="conditional-options" style="display: none;">
+                                <div class="form-group">
+                                    <label for="sambaShare">Samba Share:</label>
+                                    <input type="text" id="sambaShare" name="sambaShare" placeholder="192.168.1.100/shared">
+                                    <small>Format: server/share (e.g., 192.168.1.100/shared or fileserver.local/builds)</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="sambaMountPath">Mount Path:</label>
+                                    <input type="text" id="sambaMountPath" name="sambaMountPath" placeholder="/mnt/samba" value="/mnt/samba">
+                                    <small>Where to mount the Samba share (Linux: /mnt/samba, Windows: S:)</small>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group half">
+                                        <label for="sambaUsername">Username:</label>
+                                        <input type="text" id="sambaUsername" name="sambaUsername" placeholder="username">
+                                        <small>Leave empty for guest access</small>
+                                    </div>
+                                    <div class="form-group half">
+                                        <label for="sambaPassword">Password:</label>
+                                        <input type="password" id="sambaPassword" name="sambaPassword" placeholder="password">
+                                        <small>Leave empty for guest access</small>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="sambaDomain">Domain (Optional):</label>
+                                    <input type="text" id="sambaDomain" name="sambaDomain" placeholder="WORKGROUP">
+                                    <small>Windows domain or workgroup (optional)</small>
+                                </div>
                             </div>
                         </div>
                     </div>

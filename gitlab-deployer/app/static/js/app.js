@@ -53,19 +53,32 @@ document.addEventListener('DOMContentLoaded', function() {
     deploymentForm.addEventListener('submit', function(e) {
         e.preventDefault();
 
-        const adminPassword = document.getElementById('adminPassword').value;
-        const confirmPassword = document.getElementById('confirmPassword').value;
+        // Get GitLab deployment mode
+        const gitlabMode = document.querySelector('input[name="gitlabMode"]:checked').value;
+        const deployGitlab = (gitlabMode === 'new');
+        const gitlabUrl = document.getElementById('gitlabUrl').value;
 
-        // Validate passwords match
-        if (adminPassword !== confirmPassword) {
-            showStatus('error', 'Passwords do not match!');
-            return;
-        }
+        // Mode-specific validation
+        if (gitlabMode === 'new') {
+            const adminPassword = document.getElementById('adminPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
 
-        // Validate password strength
-        if (adminPassword.length < 8) {
-            showStatus('error', 'Password must be at least 8 characters long!');
-            return;
+            // Validate passwords match
+            if (adminPassword !== confirmPassword) {
+                showStatus('error', 'Passwords do not match!');
+                return;
+            }
+
+            // Validate password strength
+            if (adminPassword.length < 8) {
+                showStatus('error', 'Password must be at least 8 characters long!');
+                return;
+            }
+        } else if (gitlabMode === 'existing') {
+            if (!gitlabUrl) {
+                showStatus('error', 'Please provide an existing GitLab server URL');
+                return;
+            }
         }
 
         // Collect selected runners
@@ -73,6 +86,12 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
             selectedRunners.push(checkbox.value);
         });
+
+        // Validate at least one runner is selected
+        if (selectedRunners.length === 0) {
+            showStatus('error', 'Please select at least one runner platform');
+            return;
+        }
 
         // Get selected credential
         const credentialId = document.getElementById('deployCredential')?.value || '';
@@ -86,17 +105,31 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // Collect shared storage configuration
+        const enableNfs = document.getElementById('enableNfs')?.checked || false;
+        const enableSamba = document.getElementById('enableSamba')?.checked || false;
+
         // Collect form data
         const deploymentData = {
-            domain: document.getElementById('domain').value,
-            email: document.getElementById('email').value,
-            admin_password: adminPassword,
-            letsencrypt_enabled: document.getElementById('letsencrypt').checked,
+            deploy_gitlab: deployGitlab,
+            gitlab_url: gitlabMode === 'existing' ? gitlabUrl : '',
+            domain: deployGitlab ? document.getElementById('domain').value : `runners-${Date.now()}`,
+            email: deployGitlab ? document.getElementById('email').value : '',
+            admin_password: deployGitlab ? document.getElementById('adminPassword').value : '',
+            letsencrypt_enabled: deployGitlab ? document.getElementById('letsencrypt').checked : false,
             runners: selectedRunners,
-            // Traefik settings
-            traefik_enabled: document.getElementById('traefik').checked,
-            base_domain: document.getElementById('baseDomain')?.value || '',
-            traefik_dashboard: document.getElementById('traefikDashboard')?.checked || false,
+            // Traefik settings (only for new GitLab)
+            traefik_enabled: deployGitlab ? document.getElementById('traefik').checked : false,
+            base_domain: deployGitlab ? (document.getElementById('baseDomain')?.value || '') : '',
+            traefik_dashboard: deployGitlab ? (document.getElementById('traefikDashboard')?.checked || false) : false,
+            // Shared storage configuration
+            nfs_share: enableNfs ? document.getElementById('nfsShare').value : '',
+            nfs_mount_path: enableNfs ? document.getElementById('nfsMountPath').value : '/mnt/shared',
+            samba_share: enableSamba ? document.getElementById('sambaShare').value : '',
+            samba_mount_path: enableSamba ? document.getElementById('sambaMountPath').value : '/mnt/samba',
+            samba_username: enableSamba ? document.getElementById('sambaUsername').value : '',
+            samba_password: enableSamba ? document.getElementById('sambaPassword').value : '',
+            samba_domain: enableSamba ? document.getElementById('sambaDomain').value : '',
             // Infrastructure provider - always Proxmox
             provider: 'proxmox',
             provider_config: providerConfig,
@@ -151,10 +184,14 @@ function updateSelectedCount() {
 
 // Calculate and update resource totals
 function updateResourceTotals() {
-    // Start with GitLab server requirements
-    let totalCpu = GITLAB_SERVER_RESOURCES.cpu;
-    let totalMemory = GITLAB_SERVER_RESOURCES.memory;
-    let totalStorage = GITLAB_SERVER_RESOURCES.storage;
+    // Determine GitLab mode
+    const gitlabModeElement = document.querySelector('input[name="gitlabMode"]:checked');
+    const gitlabMode = gitlabModeElement ? gitlabModeElement.value : 'new';
+
+    // Start with GitLab server requirements if deploying new GitLab
+    let totalCpu = (gitlabMode === 'new') ? GITLAB_SERVER_RESOURCES.cpu : 0;
+    let totalMemory = (gitlabMode === 'new') ? GITLAB_SERVER_RESOURCES.memory : 0;
+    let totalStorage = (gitlabMode === 'new') ? GITLAB_SERVER_RESOURCES.storage : 0;
 
     // Add runner requirements
     document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
@@ -270,6 +307,100 @@ function toggleTraefikOptions() {
         } else {
             traefikOptions.style.display = 'none';
         }
+    }
+}
+
+// Toggle GitLab deployment mode visibility
+function updateGitLabModeVisibility() {
+    const gitlabMode = document.querySelector('input[name="gitlabMode"]:checked').value;
+    const existingGitLabConfig = document.getElementById('existingGitLabConfig');
+    const gitlabServerConfigSection = document.getElementById('gitlabServerConfigSection');
+    const domain = document.getElementById('domain');
+    const email = document.getElementById('email');
+    const adminPassword = document.getElementById('adminPassword');
+    const confirmPassword = document.getElementById('confirmPassword');
+
+    if (gitlabMode === 'new') {
+        // New GitLab mode: show full GitLab config, hide existing URL
+        existingGitLabConfig.style.display = 'none';
+        gitlabServerConfigSection.style.display = 'block';
+        domain.required = true;
+        email.required = true;
+        adminPassword.required = true;
+        confirmPassword.required = true;
+    } else if (gitlabMode === 'existing') {
+        // Existing GitLab mode: show existing URL, hide new config
+        existingGitLabConfig.style.display = 'block';
+        gitlabServerConfigSection.style.display = 'none';
+        domain.required = false;
+        email.required = false;
+        adminPassword.required = false;
+        confirmPassword.required = false;
+    } else {
+        // Runners only mode: hide both
+        existingGitLabConfig.style.display = 'none';
+        gitlabServerConfigSection.style.display = 'none';
+        domain.required = false;
+        email.required = false;
+        adminPassword.required = false;
+        confirmPassword.required = false;
+    }
+
+    // Update resource totals to reflect whether GitLab server is included
+    updateResourceTotals();
+}
+
+// Test existing GitLab server connection
+function testExistingGitLab() {
+    const gitlabUrl = document.getElementById('gitlabUrl').value;
+    const testResult = document.getElementById('gitlabTestResult');
+
+    if (!gitlabUrl) {
+        testResult.innerHTML = '<span class="error">Please enter a GitLab URL</span>';
+        testResult.style.display = 'block';
+        return;
+    }
+
+    testResult.innerHTML = '<span class="info">Testing connection...</span>';
+    testResult.style.display = 'block';
+
+    fetch('/api/test-gitlab', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ gitlab_url: gitlabUrl })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            testResult.innerHTML = `<span class="success">✓ ${data.message}</span>`;
+        } else {
+            testResult.innerHTML = `<span class="error">✗ ${data.error || data.message}</span>`;
+        }
+    })
+    .catch(error => {
+        testResult.innerHTML = `<span class="error">✗ Connection failed: ${error.message}</span>`;
+    });
+}
+
+// Toggle NFS configuration visibility
+function toggleNfsConfig() {
+    const enableNfs = document.getElementById('enableNfs');
+    const nfsConfig = document.getElementById('nfsConfig');
+
+    if (nfsConfig) {
+        nfsConfig.style.display = enableNfs.checked ? 'block' : 'none';
+    }
+}
+
+// Toggle Samba configuration visibility
+function toggleSambaConfig() {
+    const enableSamba = document.getElementById('enableSamba');
+    const sambaConfig = document.getElementById('sambaConfig');
+
+    if (sambaConfig) {
+        sambaConfig.style.display = enableSamba.checked ? 'block' : 'none';
     }
 }
 

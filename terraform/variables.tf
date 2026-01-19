@@ -98,3 +98,61 @@ variable "traefik_acme_path" {
   type        = string
   default     = "/srv/traefik/acme"
 }
+
+# GitLab Deployment Mode Variables
+variable "deploy_gitlab" {
+  description = "Whether to deploy a new GitLab server"
+  type        = bool
+  default     = true
+}
+
+variable "gitlab_url" {
+  description = "URL of existing GitLab server (if not deploying new)"
+  type        = string
+  default     = ""
+}
+
+# Shared Storage Variables
+variable "nfs_share" {
+  description = "NFS share to mount (format: server:/path)"
+  type        = string
+  default     = ""
+}
+
+variable "nfs_mount_path" {
+  description = "Path where NFS should be mounted"
+  type        = string
+  default     = "/mnt/shared"
+}
+
+variable "samba_share" {
+  description = "Samba/CIFS share to mount (format: server/share)"
+  type        = string
+  default     = ""
+}
+
+variable "samba_mount_path" {
+  description = "Path where Samba share should be mounted"
+  type        = string
+  default     = "/mnt/samba"
+}
+
+variable "samba_username" {
+  description = "Username for Samba authentication"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "samba_password" {
+  description = "Password for Samba authentication"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "samba_domain" {
+  description = "Domain for Samba authentication"
+  type        = string
+  default     = ""
+}

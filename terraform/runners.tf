@@ -25,6 +25,24 @@ resource "docker_container" "runner_windows_10" {
     container_path = "/etc/gitlab-runner"
   }
 
+  # NFS volume mount (if configured)
+  dynamic "volumes" {
+    for_each = var.nfs_share != "" ? [1] : []
+    content {
+      volume_name    = "nfs_shared"
+      container_path = var.nfs_mount_path
+    }
+  }
+
+  # Samba/CIFS volume mount (if configured)
+  dynamic "volumes" {
+    for_each = var.samba_share != "" ? [1] : []
+    content {
+      volume_name    = "samba_shared"
+      container_path = var.samba_mount_path
+    }
+  }
+
   env = [
     "RUNNER_NAME=windows-10-runner",
     "RUNNER_TAGS=windows,windows-10,desktop",
@@ -32,7 +50,8 @@ resource "docker_container" "runner_windows_10" {
     "DOCKER_IMAGE=mcr.microsoft.com/windows:10.0.19041.1415"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Windows 11 Runner
@@ -60,7 +79,8 @@ resource "docker_container" "runner_windows_11" {
     "DOCKER_IMAGE=mcr.microsoft.com/windows:ltsc2022"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Windows Server 2022 Runner
@@ -88,7 +108,8 @@ resource "docker_container" "runner_windows_server_2022" {
     "DOCKER_IMAGE=mcr.microsoft.com/windows/servercore:ltsc2022"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Windows Server 2025 Runner
@@ -116,7 +137,8 @@ resource "docker_container" "runner_windows_server_2025" {
     "DOCKER_IMAGE=mcr.microsoft.com/windows/servercore:ltsc2025"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Debian Runner
@@ -144,7 +166,8 @@ resource "docker_container" "runner_debian" {
     "DOCKER_IMAGE=debian:latest"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Ubuntu Runner
@@ -172,7 +195,8 @@ resource "docker_container" "runner_ubuntu" {
     "DOCKER_IMAGE=ubuntu:latest"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Arch Linux Runner
@@ -200,7 +224,8 @@ resource "docker_container" "runner_arch" {
     "DOCKER_IMAGE=archlinux:latest"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # Rocky Linux Runner
@@ -228,7 +253,8 @@ resource "docker_container" "runner_rocky" {
     "DOCKER_IMAGE=rockylinux:latest"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
 
 # macOS Runner (requires macOS host)
@@ -255,5 +281,6 @@ resource "docker_container" "runner_macos" {
     "RUNNER_EXECUTOR=shell"
   ]
 
-  depends_on = [docker_container.gitlab]
+  # Only depend on GitLab if it's being deployed
+  depends_on = var.deploy_gitlab ? [docker_container.gitlab[0]] : []
 }
