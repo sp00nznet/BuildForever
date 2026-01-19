@@ -1911,12 +1911,15 @@ def get_nfs_mount_script_windows(nfs_share, mount_path='N:'):
         server = nfs_share
         path = '/'
 
+    # Convert path to Windows format (backslashes can't be in f-string expressions)
+    windows_path = path.replace('/', '\\')
+
     return f'''
 # Configure NFS shared storage
 Write-Host "Setting up NFS share..."
 Install-WindowsFeature -Name NFS-Client -ErrorAction SilentlyContinue
 $nfsDrive = "{mount_path}"
-$nfsPath = "\\\\{server}\\{path.replace('/', '\\')}"
+$nfsPath = "\\\\{server}\\{windows_path}"
 New-PSDrive -Name ($nfsDrive.TrimEnd(':')) -PSProvider FileSystem -Root $nfsPath -Persist -ErrorAction SilentlyContinue
 Write-Host "NFS share mounted at $nfsDrive"
 '''
