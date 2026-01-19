@@ -12,10 +12,11 @@ Write-Host ""
 
 # Check if Python is installed
 Write-Host "[1/5] Checking for Python installation..." -ForegroundColor Yellow
-try {
-    $pythonVersion = python --version 2>&1
-    Write-Host "Found: $pythonVersion" -ForegroundColor Green
-} catch {
+$pythonVersion = python --version 2>&1
+$pythonExitCode = $LASTEXITCODE
+
+# Check if Python command failed or returned Windows Store alias message
+if ($pythonExitCode -ne 0 -or $pythonVersion -match "was not found" -or $pythonVersion -match "not recognized") {
     Write-Host "ERROR: Python is not installed or not in PATH" -ForegroundColor Red
     Write-Host ""
     Write-Host "Please install Python 3.8+ using one of these methods:" -ForegroundColor Yellow
@@ -23,8 +24,12 @@ try {
     Write-Host "  2. Download from: https://www.python.org/downloads/" -ForegroundColor White
     Write-Host "  3. Or add Python to your PATH if already installed" -ForegroundColor White
     Write-Host ""
+    Write-Host "After installing, restart your terminal and try again." -ForegroundColor Yellow
+    Write-Host ""
     exit 1
 }
+
+Write-Host "Found: $pythonVersion" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[2/5] Installing build dependencies..." -ForegroundColor Yellow
