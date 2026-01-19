@@ -47,6 +47,15 @@ def init_db():
                 traefik_dashboard INTEGER DEFAULT 1,
                 proxmox_config TEXT,
                 network_config TEXT,
+                deploy_gitlab INTEGER DEFAULT 1,
+                gitlab_url TEXT,
+                nfs_share TEXT,
+                nfs_mount_path TEXT,
+                samba_share TEXT,
+                samba_mount_path TEXT,
+                samba_username TEXT,
+                samba_password TEXT,
+                samba_domain TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -75,6 +84,51 @@ def init_db():
 
         try:
             cursor.execute('ALTER TABLE saved_configs ADD COLUMN network_config TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN deploy_gitlab INTEGER DEFAULT 1')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN gitlab_url TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN nfs_share TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN nfs_mount_path TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN samba_share TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN samba_mount_path TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN samba_username TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN samba_password TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute('ALTER TABLE saved_configs ADD COLUMN samba_domain TEXT')
         except sqlite3.OperationalError:
             pass  # Column already exists
 
@@ -129,7 +183,8 @@ class SavedConfig:
     @staticmethod
     def create(name, domain, email, admin_password=None, letsencrypt_enabled=True, runners=None,
                traefik_enabled=False, base_domain=None, traefik_dashboard=True, proxmox_config=None,
-               network_config=None):
+               network_config=None, deploy_gitlab=True, gitlab_url=None, nfs_share=None, nfs_mount_path=None,
+               samba_share=None, samba_mount_path=None, samba_username=None, samba_password=None, samba_domain=None):
         """Create a new saved configuration"""
         runners_json = json.dumps(runners or [])
         proxmox_config_json = json.dumps(proxmox_config) if proxmox_config else None
@@ -138,17 +193,23 @@ class SavedConfig:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO saved_configs (name, domain, email, admin_password, letsencrypt_enabled, runners,
-                                          traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config,
+                                          deploy_gitlab, gitlab_url, nfs_share, nfs_mount_path, samba_share, samba_mount_path,
+                                          samba_username, samba_password, samba_domain)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (name, domain, email, admin_password, int(letsencrypt_enabled), runners_json,
-                  int(traefik_enabled), base_domain, int(traefik_dashboard), proxmox_config_json, network_config_json))
+                  int(traefik_enabled), base_domain, int(traefik_dashboard), proxmox_config_json, network_config_json,
+                  int(deploy_gitlab), gitlab_url, nfs_share, nfs_mount_path, samba_share, samba_mount_path,
+                  samba_username, samba_password, samba_domain))
             return cursor.lastrowid
 
     @staticmethod
     def update(config_id, **kwargs):
         """Update an existing configuration"""
         allowed_fields = ['name', 'domain', 'email', 'admin_password', 'letsencrypt_enabled', 'runners',
-                         'traefik_enabled', 'base_domain', 'traefik_dashboard', 'proxmox_config', 'network_config']
+                         'traefik_enabled', 'base_domain', 'traefik_dashboard', 'proxmox_config', 'network_config',
+                         'deploy_gitlab', 'gitlab_url', 'nfs_share', 'nfs_mount_path', 'samba_share', 'samba_mount_path',
+                         'samba_username', 'samba_password', 'samba_domain']
         updates = []
         values = []
 
@@ -159,7 +220,7 @@ class SavedConfig:
                     value = json.dumps(value or [])
                 elif field in ('proxmox_config', 'network_config'):
                     value = json.dumps(value) if value else None
-                elif field in ('letsencrypt_enabled', 'traefik_enabled', 'traefik_dashboard'):
+                elif field in ('letsencrypt_enabled', 'traefik_enabled', 'traefik_dashboard', 'deploy_gitlab'):
                     value = int(value)
                 updates.append(f'{field} = ?')
                 values.append(value)
@@ -191,7 +252,9 @@ class SavedConfig:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
+                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config,
+                       deploy_gitlab, gitlab_url, nfs_share, nfs_mount_path, samba_share, samba_mount_path,
+                       samba_username, samba_domain, created_at, updated_at
                 FROM saved_configs ORDER BY updated_at DESC
             ''')
             rows = cursor.fetchall()
@@ -221,6 +284,14 @@ class SavedConfig:
                     'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
                     'proxmox_config': proxmox_cfg,
                     'network_config': network_cfg,
+                    'deploy_gitlab': bool(row['deploy_gitlab']) if 'deploy_gitlab' in row.keys() and row['deploy_gitlab'] is not None else True,
+                    'gitlab_url': row['gitlab_url'] if 'gitlab_url' in row.keys() else None,
+                    'nfs_share': row['nfs_share'] if 'nfs_share' in row.keys() else None,
+                    'nfs_mount_path': row['nfs_mount_path'] if 'nfs_mount_path' in row.keys() else '/mnt/shared',
+                    'samba_share': row['samba_share'] if 'samba_share' in row.keys() else None,
+                    'samba_mount_path': row['samba_mount_path'] if 'samba_mount_path' in row.keys() else '/mnt/samba',
+                    'samba_username': row['samba_username'] if 'samba_username' in row.keys() else None,
+                    'samba_domain': row['samba_domain'] if 'samba_domain' in row.keys() else None,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 })
@@ -236,7 +307,9 @@ class SavedConfig:
             else:
                 cursor.execute('''
                     SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                           traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
+                           traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config,
+                           deploy_gitlab, gitlab_url, nfs_share, nfs_mount_path, samba_share, samba_mount_path,
+                           samba_username, samba_domain, created_at, updated_at
                     FROM saved_configs WHERE id = ?
                 ''', (config_id,))
             row = cursor.fetchone()
@@ -265,11 +338,21 @@ class SavedConfig:
                     'traefik_dashboard': bool(row['traefik_dashboard']) if 'traefik_dashboard' in row.keys() and row['traefik_dashboard'] is not None else True,
                     'proxmox_config': proxmox_cfg,
                     'network_config': network_cfg,
+                    'deploy_gitlab': bool(row['deploy_gitlab']) if 'deploy_gitlab' in row.keys() and row['deploy_gitlab'] is not None else True,
+                    'gitlab_url': row['gitlab_url'] if 'gitlab_url' in row.keys() else None,
+                    'nfs_share': row['nfs_share'] if 'nfs_share' in row.keys() else None,
+                    'nfs_mount_path': row['nfs_mount_path'] if 'nfs_mount_path' in row.keys() else '/mnt/shared',
+                    'samba_share': row['samba_share'] if 'samba_share' in row.keys() else None,
+                    'samba_mount_path': row['samba_mount_path'] if 'samba_mount_path' in row.keys() else '/mnt/samba',
+                    'samba_username': row['samba_username'] if 'samba_username' in row.keys() else None,
+                    'samba_domain': row['samba_domain'] if 'samba_domain' in row.keys() else None,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
                 if include_password and 'admin_password' in row.keys():
                     result['admin_password'] = row['admin_password']
+                if include_password and 'samba_password' in row.keys():
+                    result['samba_password'] = row['samba_password']
                 return result
             return None
 
@@ -280,7 +363,9 @@ class SavedConfig:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id, name, domain, email, letsencrypt_enabled, runners,
-                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config, created_at, updated_at
+                       traefik_enabled, base_domain, traefik_dashboard, proxmox_config, network_config,
+                       deploy_gitlab, gitlab_url, nfs_share, nfs_mount_path, samba_share, samba_mount_path,
+                       samba_username, samba_domain, created_at, updated_at
                 FROM saved_configs WHERE name = ?
             ''', (name,))
             row = cursor.fetchone()
@@ -309,6 +394,14 @@ class SavedConfig:
                     'traefik_dashboard': bool(row['traefik_dashboard']) if row['traefik_dashboard'] is not None else True,
                     'proxmox_config': proxmox_cfg,
                     'network_config': network_cfg,
+                    'deploy_gitlab': bool(row['deploy_gitlab']) if 'deploy_gitlab' in row.keys() and row['deploy_gitlab'] is not None else True,
+                    'gitlab_url': row['gitlab_url'] if 'gitlab_url' in row.keys() else None,
+                    'nfs_share': row['nfs_share'] if 'nfs_share' in row.keys() else None,
+                    'nfs_mount_path': row['nfs_mount_path'] if 'nfs_mount_path' in row.keys() else '/mnt/shared',
+                    'samba_share': row['samba_share'] if 'samba_share' in row.keys() else None,
+                    'samba_mount_path': row['samba_mount_path'] if 'samba_mount_path' in row.keys() else '/mnt/samba',
+                    'samba_username': row['samba_username'] if 'samba_username' in row.keys() else None,
+                    'samba_domain': row['samba_domain'] if 'samba_domain' in row.keys() else None,
                     'created_at': row['created_at'],
                     'updated_at': row['updated_at']
                 }
