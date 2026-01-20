@@ -183,6 +183,7 @@ def deploy():
         # GitLab deployment settings
         'deploy_gitlab': deploy_gitlab,
         'gitlab_url': gitlab_url,
+        'runner_token': runner_token,
         # Shared storage settings
         'nfs_share': data.get('nfs_share', ''),
         'nfs_mount_path': data.get('nfs_mount_path', '/mnt/shared'),
@@ -610,6 +611,7 @@ def execute_proxmox_deployment(config, deployment_id):
         # Get GitLab deployment settings
         deploy_gitlab = config.get('deploy_gitlab', True)
         gitlab_url = config.get('gitlab_url', '')
+        runner_token = config.get('runner_token', '')
 
         # Get shared storage configuration
         storage_config = {
