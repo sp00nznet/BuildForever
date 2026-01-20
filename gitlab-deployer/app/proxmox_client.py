@@ -877,8 +877,16 @@ echo "SUCCESS: $ISO_PATH"
 
     def _get_windows_autounattend_xml(self, windows_type, username, password,
                                        static_ip=None, gateway=None, dns='8.8.8.8',
-                                       include_virtio_drivers=True):
-        """Generate autounattend.xml for unattended Windows installation."""
+                                       include_virtio_drivers=True, use_uefi=None):
+        """Generate autounattend.xml for unattended Windows installation.
+
+        Args:
+            use_uefi: If True, use GPT/UEFI partitioning. If False, use MBR/BIOS.
+                      If None, auto-detect based on windows_type.
+        """
+        # Auto-detect UEFI requirement if not specified
+        if use_uefi is None:
+            use_uefi = windows_type in ['windows-11', 'windows-server-2025']
 
         # Determine Windows image name based on type
         image_names = {
@@ -999,7 +1007,7 @@ echo "SUCCESS: $ISO_PATH"
         <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
             <DiskConfiguration>
                 <Disk wcm:action="add">
-                    <CreatePartitions>
+                    <CreatePartitions>''' + ('''
                         <CreatePartition wcm:action="add">
                             <Order>1</Order>
                             <Type>EFI</Type>
@@ -1014,9 +1022,14 @@ echo "SUCCESS: $ISO_PATH"
                             <Order>3</Order>
                             <Type>Primary</Type>
                             <Extend>true</Extend>
-                        </CreatePartition>
+                        </CreatePartition>''' if use_uefi else '''
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>''') + '''
                     </CreatePartitions>
-                    <ModifyPartitions>
+                    <ModifyPartitions>''' + ('''
                         <ModifyPartition wcm:action="add">
                             <Order>1</Order>
                             <PartitionID>1</PartitionID>
@@ -1033,7 +1046,15 @@ echo "SUCCESS: $ISO_PATH"
                             <Format>NTFS</Format>
                             <Label>Windows</Label>
                             <Letter>C</Letter>
-                        </ModifyPartition>
+                        </ModifyPartition>''' if use_uefi else '''
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Format>NTFS</Format>
+                            <Label>Windows</Label>
+                            <Letter>C</Letter>
+                            <Active>true</Active>
+                        </ModifyPartition>''') + '''
                     </ModifyPartitions>
                     <DiskID>0</DiskID>
                     <WillWipeDisk>true</WillWipeDisk>
@@ -1043,7 +1064,7 @@ echo "SUCCESS: $ISO_PATH"
                 <OSImage>
                     <InstallTo>
                         <DiskID>0</DiskID>
-                        <PartitionID>3</PartitionID>
+                        <PartitionID>''' + ('3' if use_uefi else '1') + '''</PartitionID>
                     </InstallTo>
                     <InstallFrom>
                         <MetaData wcm:action="add">
@@ -1377,21 +1398,27 @@ echo GitLab Runner installation complete!
                     '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
                 ])
             })
-        # Windows-specific configuration - UEFI for GPT compatibility
+        # Windows-specific configuration
         elif is_windows:
-            # Windows 11 and Server 2025 require TPM 2.0
-            needs_tpm = windows_version in ['windows-11', 'windows-server-2025']
+            # Windows 11 and Server 2025 REQUIRE UEFI + TPM 2.0
+            needs_uefi = windows_version in ['windows-11', 'windows-server-2025']
 
-            # All Windows use UEFI (for GPT partitioning in autounattend.xml)
-            params.update({
-                'bios': 'ovmf',
-                'machine': 'q35',
-                'efidisk0': f'{storage}:1',
-                'ostype': 'win11' if needs_tpm else 'win10',
-            })
-
-            if needs_tpm:
-                params['tpmstate0'] = f'{storage}:1,version=v2.0'
+            if needs_uefi:
+                # Windows 11/Server 2025: Must use UEFI
+                params.update({
+                    'bios': 'ovmf',
+                    'machine': 'q35',
+                    'efidisk0': f'{storage}:1',
+                    'ostype': 'win11',
+                    'tpmstate0': f'{storage}:1,version=v2.0',
+                })
+            else:
+                # Windows 10/Server 2022: Use SeaBIOS (avoids UEFI boot issues)
+                params.update({
+                    'bios': 'seabios',
+                    'machine': 'pc',
+                    'ostype': 'win10',
+                })
         else:
             params['bios'] = bios
             params['machine'] = machine
