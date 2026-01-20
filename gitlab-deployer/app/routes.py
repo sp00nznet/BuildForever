@@ -831,7 +831,7 @@ def execute_proxmox_deployment(config, deployment_id):
                                 script = get_runner_install_script(
                                     rtype,
                                     final_gitlab_url if final_gitlab_url else '',
-                                    'REGISTRATION_TOKEN' if final_gitlab_url else '',
+                                    runner_token if runner_token else '',
                                     storage_config
                                 )
                                 client.provision_container(selected_node, vmid, script)
