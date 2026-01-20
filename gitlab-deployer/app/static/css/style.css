@@ -29,11 +29,11 @@ body {
     padding: 10px;
 }
 
-/* Two-column layout */
+/* Two-column layout - form left, console right */
 .two-column-layout {
-    display: grid;
-    grid-template-columns: 1fr 400px;
-    gap: 15px;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 350px !important;
+    gap: 12px;
     align-items: start;
 }
 
@@ -42,11 +42,16 @@ body {
     padding: 15px;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    grid-column: 1;
+    order: 1;
 }
 
 .right-column {
     position: sticky;
     top: 10px;
+    grid-column: 2;
+    order: 2;
+    min-width: 300px;
 }
 
 .right-column .status-section {
@@ -99,13 +104,18 @@ body {
     word-break: break-word;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 900px) {
     .two-column-layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
     .right-column {
         position: static;
         order: -1;
+        grid-column: 1;
+    }
+    .left-column {
+        grid-column: 1;
+        order: 1;
     }
 }
 

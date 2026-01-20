@@ -92,6 +92,7 @@ def deploy():
     # Check if GitLab deployment is requested
     deploy_gitlab = data.get('deploy_gitlab', True)
     gitlab_url = data.get('gitlab_url', '')
+    runner_token = data.get('runner_token', '')
 
     # Validate required fields based on deployment mode
     if deploy_gitlab:
@@ -761,7 +762,7 @@ def execute_proxmox_deployment(config, deployment_id):
                             username=win_username,
                             password=win_password,
                             gitlab_url=gitlab_url,
-                            runner_token=None,  # Token would come from GitLab API after it's running
+                            runner_token=runner_token if runner_token else None,
                             static_ip=runner_static_ip,
                             gateway=network_gateway if runner_static_ip else None,
                             dns=network_dns

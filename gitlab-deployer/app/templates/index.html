@@ -243,6 +243,11 @@
                                 <input type="url" id="gitlabUrl" name="gitlabUrl" placeholder="https://gitlab.example.com">
                                 <small>The URL of your existing GitLab server</small>
                             </div>
+                            <div class="form-group">
+                                <label for="runnerToken">Runner Registration Token:</label>
+                                <input type="text" id="runnerToken" name="runnerToken" placeholder="GR1348941...">
+                                <small>Get this from GitLab Admin &gt; CI/CD &gt; Runners &gt; Register an instance runner</small>
+                            </div>
                             <button type="button" class="btn btn-small btn-secondary" onclick="testExistingGitLab()">Test Connection</button>
                             <div id="gitlabTestResult" class="test-result" style="display: none;"></div>
                         </div>
