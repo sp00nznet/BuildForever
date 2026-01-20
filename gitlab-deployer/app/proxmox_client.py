@@ -1353,11 +1353,10 @@ echo ============================================'''
             time.sleep(3)
         return None
 
-    def provision_container(self, node, vmid, script, timeout=600, container_password='buildforever'):
-        """Execute a provisioning script inside a container via SSH directly to container."""
+    def provision_container(self, node, vmid, script, timeout=600):
+        """Execute a provisioning script inside a container via SSH."""
         paramiko = _get_paramiko()
 
-        # Get container IP
         ip = self.get_container_ip(node, vmid)
         if not ip:
             return {'success': False, 'error': 'Could not get container IP'}
@@ -1368,25 +1367,20 @@ echo ============================================'''
 
         start_time = time.time()
         connected = False
-        last_error = None
         while time.time() - start_time < 120:
             try:
-                ssh.connect(ip, username='root', password=container_password, timeout=10)
+                ssh.connect(ip, username='root', password='root', timeout=10)
                 connected = True
                 break
-            except Exception as e:
-                last_error = str(e)
+            except Exception:
                 time.sleep(5)
 
         if not connected:
-            return {'success': False, 'error': f'Could not SSH to container at {ip}: {last_error}'}
+            return {'success': False, 'error': 'Could not connect via SSH'}
 
         try:
-            # Base64 encode and execute script
-            script_b64 = base64.b64encode(script.encode()).decode()
-            exec_cmd = f'echo "{script_b64}" | base64 -d | bash -s'
-
-            stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
+            # Execute the script
+            stdin, stdout, stderr = ssh.exec_command(f'bash -c "{script}"', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
@@ -1398,10 +1392,7 @@ echo ============================================'''
             else:
                 return {'success': False, 'error': errors or output, 'exit_code': exit_code}
         except Exception as e:
-            try:
-                ssh.close()
-            except Exception:
-                pass
+            ssh.close()
             return {'success': False, 'error': str(e)}
 
     # =========================================================================
