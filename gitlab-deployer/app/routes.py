@@ -366,6 +366,55 @@ def provision_gitlab_manual():
         }), 500
 
 
+@bp.route('/api/test-ssh', methods=['POST'])
+def test_ssh():
+    """Test SSH connection to Proxmox host."""
+    data = request.json
+    host = data.get('host')
+    password = data.get('password')
+    vmid = data.get('vmid')
+
+    if not host or not password:
+        return jsonify({'success': False, 'error': 'Host and password required'})
+
+    try:
+        import paramiko
+    except ImportError:
+        return jsonify({'success': False, 'error': 'paramiko not installed'})
+
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(host, username='root', password=password, timeout=10)
+
+        # Test basic command
+        stdin, stdout, stderr = ssh.exec_command('hostname')
+        hostname = stdout.read().decode().strip()
+
+        # If vmid provided, test pct exec
+        if vmid:
+            stdin, stdout, stderr = ssh.exec_command(f'pct exec {vmid} -- echo "test"')
+            exit_code = stdout.channel.recv_exit_status()
+            pct_output = stdout.read().decode().strip()
+            pct_error = stderr.read().decode().strip()
+            ssh.close()
+            return jsonify({
+                'success': exit_code == 0,
+                'hostname': hostname,
+                'pct_exit_code': exit_code,
+                'pct_output': pct_output,
+                'pct_error': pct_error
+            })
+
+        ssh.close()
+        return jsonify({'success': True, 'hostname': hostname, 'message': 'SSH works'})
+
+    except paramiko.AuthenticationException as e:
+        return jsonify({'success': False, 'error': f'SSH auth failed: {str(e)}'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @bp.route('/api/provisioning-status', methods=['GET'])
 def get_provisioning_status():
     """Get the current provisioning status for all VMs."""
