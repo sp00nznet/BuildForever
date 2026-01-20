@@ -613,6 +613,46 @@ function checkProvisioningStatus() {
     });
 }
 
+// Test SSH connection to Proxmox
+function testSSH() {
+    const host = document.getElementById('proxmoxHost').value;
+    const password = document.getElementById('proxmoxPassword').value;
+    const vmid = document.getElementById('provisionVmid').value;
+
+    if (!host || !password) {
+        showStatus('error', 'Enter Proxmox host and password first');
+        return;
+    }
+
+    showStatus('info', 'Testing SSH connection...');
+
+    fetch('/api/test-ssh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, password, vmid: vmid ? parseInt(vmid) : null })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            let msg = `SSH OK! Host: ${data.hostname}`;
+            if (data.pct_output !== undefined) {
+                msg += `, pct exec: ${data.pct_output || 'OK'}`;
+            }
+            showStatus('success', msg);
+            appendLog('SSH Test Result: ' + JSON.stringify(data, null, 2));
+        } else {
+            showStatus('error', `SSH Failed: ${data.error}`);
+            appendLog('SSH FAILED: ' + data.error);
+            if (data.pct_error) {
+                appendLog('pct error: ' + data.pct_error);
+            }
+        }
+    })
+    .catch(error => {
+        showStatus('error', `Request failed: ${error.message}`);
+    });
+}
+
 // Toggle NFS configuration visibility
 function toggleNfsConfig() {
     const enableNfs = document.getElementById('enableNfs');
