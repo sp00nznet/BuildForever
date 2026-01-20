@@ -1,0 +1,27 @@
+# BuildForever GitLab Deployer - Python Requirements
+# This file includes all dependencies needed to run the application
+
+# Flask and web framework
+Flask>=3.0.0
+Werkzeug>=3.0.1
+
+# Configuration and data handling
+PyYAML>=6.0.1
+Jinja2>=3.1.2
+
+# HTTP and networking
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Infrastructure providers - Proxmox support
+proxmoxer>=2.0.1
+
+# SSH for container provisioning
+paramiko>=3.4.0
+
+# Cryptography (required by paramiko)
+cryptography>=41.0.0
+
+# Utilities
+click>=8.1.7
+python-dotenv>=1.0.0

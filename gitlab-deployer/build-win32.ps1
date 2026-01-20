@@ -87,8 +87,28 @@ Write-Host "[2/5] Installing build dependencies..." -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "[3/5] Installing application dependencies..." -ForegroundColor Yellow
-& $pythonCmd -m pip install -r requirements.txt
-& $pythonCmd -m pip install -r requirements-desktop.txt
+
+# Install from local requirements.txt (includes all core deps)
+if (Test-Path "requirements.txt") {
+    Write-Host "Installing from requirements.txt..." -ForegroundColor White
+    & $pythonCmd -m pip install -r requirements.txt
+}
+
+# Install desktop-specific requirements
+if (Test-Path "requirements-desktop.txt") {
+    Write-Host "Installing from requirements-desktop.txt..." -ForegroundColor White
+    & $pythonCmd -m pip install -r requirements-desktop.txt
+}
+
+# Also check parent directory for additional requirements
+if (Test-Path "..\requirements.txt") {
+    Write-Host "Installing from parent requirements.txt..." -ForegroundColor White
+    & $pythonCmd -m pip install -r ..\requirements.txt
+}
+
+# Explicitly ensure critical Proxmox dependencies are installed
+Write-Host "Ensuring Proxmox dependencies are installed..." -ForegroundColor White
+& $pythonCmd -m pip install proxmoxer paramiko requests cryptography
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Failed to install dependencies" -ForegroundColor Red
