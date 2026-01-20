@@ -1433,8 +1433,9 @@ echo ============================================'''
                 time.sleep(5)
 
             # Base64 encode and execute via pct exec
+            # Run everything inside container via bash -c to avoid stdin piping issues
             script_b64 = base64.b64encode(script.encode()).decode()
-            exec_cmd = f'echo {script_b64} | base64 -d | pct exec {vmid} -- bash -s'
+            exec_cmd = f'pct exec {vmid} -- bash -c \'echo "{script_b64}" | base64 -d | bash -s\''
 
             stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
