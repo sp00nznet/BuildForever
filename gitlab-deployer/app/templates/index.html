@@ -565,6 +565,20 @@
                     <div id="deploymentProgress" class="deployment-progress"></div>
                     <div id="deploymentLogs" class="logs"></div>
                 </div>
+
+                <!-- Manual Actions for failed provisioning -->
+                <div class="status-section" style="margin-top: 10px;">
+                    <h3>Retry Provisioning</h3>
+                    <small>Use if automatic provisioning failed</small>
+                    <div class="form-group" style="margin-top: 8px;">
+                        <input type="number" id="provisionVmid" placeholder="VMID (e.g. 111)" style="width: 100px;">
+                        <input type="text" id="provisionDomain" placeholder="Domain" value="gitlab.local" style="width: 120px;">
+                    </div>
+                    <div class="button-group" style="margin-top: 5px;">
+                        <button type="button" class="btn btn-small btn-secondary" onclick="provisionGitLab()">Install GitLab</button>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="listVMs()">List VMs</button>
+                    </div>
+                </div>
             </div><!-- end right-column -->
         </div><!-- end two-column-layout -->
 

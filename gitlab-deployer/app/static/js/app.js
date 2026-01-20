@@ -477,6 +477,108 @@ function testExistingGitLab() {
     });
 }
 
+// Provision GitLab on an existing container
+function provisionGitLab() {
+    const vmid = document.getElementById('provisionVmid').value;
+    const domain = document.getElementById('provisionDomain').value || 'gitlab.local';
+
+    if (!vmid) {
+        showStatus('error', 'Please enter a VMID');
+        return;
+    }
+
+    // Get Proxmox credentials from the form
+    const providerConfig = {
+        host: document.getElementById('proxmoxHost').value,
+        user: document.getElementById('proxmoxUser').value,
+        password: document.getElementById('proxmoxPassword').value,
+        node: document.getElementById('proxmoxNode')?.value || 'pve',
+        verify_ssl: false
+    };
+
+    if (!providerConfig.host || !providerConfig.password) {
+        showStatus('error', 'Please fill in Proxmox connection details first');
+        return;
+    }
+
+    showStatus('info', `Installing GitLab on VMID ${vmid}... This takes 10-15 minutes.`);
+    appendLog(`Starting GitLab installation on container ${vmid}...`);
+
+    fetch('/api/provision-gitlab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            vmid: parseInt(vmid),
+            domain: domain,
+            admin_password: document.getElementById('adminPassword')?.value || 'changeme',
+            provider_config: providerConfig
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showStatus('success', data.message);
+            appendLog('GitLab installation completed successfully!');
+            if (data.output) {
+                appendLog('Output: ' + data.output.substring(0, 500));
+            }
+        } else {
+            showStatus('error', `GitLab installation failed: ${data.error}`);
+            appendLog('ERROR: ' + data.error);
+        }
+    })
+    .catch(error => {
+        showStatus('error', `Request failed: ${error.message}`);
+        appendLog('ERROR: ' + error.message);
+    });
+}
+
+// List VMs/Containers from Proxmox
+function listVMs() {
+    const providerConfig = {
+        host: document.getElementById('proxmoxHost').value,
+        user: document.getElementById('proxmoxUser').value,
+        password: document.getElementById('proxmoxPassword').value,
+        verify_ssl: false
+    };
+
+    if (!providerConfig.host || !providerConfig.password) {
+        showStatus('error', 'Please fill in Proxmox connection details first');
+        return;
+    }
+
+    showStatus('info', 'Fetching VM/Container list...');
+
+    fetch('/api/proxmox/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(providerConfig)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.resources) {
+            let vmList = 'VMs/Containers found:\\n';
+            if (data.resources.vms) {
+                data.resources.vms.forEach(vm => {
+                    vmList += `  VM ${vm.vmid}: ${vm.name} (${vm.status})\\n`;
+                });
+            }
+            if (data.resources.containers) {
+                data.resources.containers.forEach(ct => {
+                    vmList += `  CT ${ct.vmid}: ${ct.name} (${ct.status})\\n`;
+                });
+            }
+            appendLog(vmList);
+            showStatus('success', 'VM list retrieved - check console');
+        } else {
+            showStatus('error', data.error || 'Failed to get VM list');
+        }
+    })
+    .catch(error => {
+        showStatus('error', `Request failed: ${error.message}`);
+    });
+}
+
 // Toggle NFS configuration visibility
 function toggleNfsConfig() {
     const enableNfs = document.getElementById('enableNfs');
