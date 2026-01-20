@@ -1434,9 +1434,18 @@ echo ============================================'''
             return {'success': False, 'error': str(e), 'log': log, 'log_file': log_file}
 
     def _write_log(self, log_file, log_entries):
-        """Write log entries to file."""
+        """Write log entries to file and update latest pointer."""
         try:
             with open(log_file, 'w') as f:
+                f.write('\n'.join(log_entries))
+            # Also write to a fixed "latest" location for easy access
+            import os
+            log_dir = os.path.dirname(log_file)
+            latest_file = os.path.join(log_dir, 'LATEST_PROVISION.log')
+            with open(latest_file, 'w') as f:
+                f.write(f"LOG_FILE: {log_file}\n")
+                f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 60 + "\n")
                 f.write('\n'.join(log_entries))
         except Exception as e:
             print(f"[PROVISION] Failed to write log file: {e}")
