@@ -1354,34 +1354,35 @@ echo ============================================'''
         return None
 
     def provision_container(self, node, vmid, script, timeout=600):
-        """Execute a provisioning script inside a container via SSH."""
+        """Execute a provisioning script inside a container via pct exec.
+
+        Uses SSH to Proxmox host then pct exec into container.
+        This is more reliable than SSH into container because Debian 12
+        LXC templates have password auth disabled by default.
+        """
         paramiko = _get_paramiko()
 
-        ip = self.get_container_ip(node, vmid)
-        if not ip:
-            return {'success': False, 'error': 'Could not get container IP'}
-
-        # Wait for SSH to be ready
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        start_time = time.time()
-        connected = False
-        while time.time() - start_time < 120:
-            try:
-                ssh.connect(ip, username='root', password='root1', timeout=10)
-                connected = True
-                break
-            except Exception:
-                time.sleep(5)
-
-        if not connected:
-            return {'success': False, 'error': 'Could not connect via SSH'}
+        try:
+            ssh.connect(self.host, username='root', password=self.password, timeout=30)
+        except Exception as e:
+            return {'success': False, 'error': f'Could not connect to Proxmox host: {str(e)}'}
 
         try:
+            # Wait for container to be running
+            for _ in range(20):
+                stdin, stdout, stderr = ssh.exec_command(f'pct status {vmid}')
+                if 'running' in stdout.read().decode().lower():
+                    break
+                time.sleep(3)
+
             # Base64 encode script to handle special characters
             script_b64 = base64.b64encode(script.encode()).decode()
-            stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
+            cmd = f'pct exec {vmid} -- bash -c "echo {script_b64} | base64 -d | bash"'
+
+            stdin, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
