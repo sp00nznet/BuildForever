@@ -31,34 +31,34 @@ body {
 
 header {
     text-align: center;
-    padding: 40px 20px;
+    padding: 20px 15px;
     background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
     color: white;
-    border-radius: 10px;
-    margin-bottom: 30px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 header h1 {
-    font-size: 3em;
-    margin-bottom: 10px;
+    font-size: 2em;
+    margin-bottom: 4px;
 }
 
 .subtitle {
-    font-size: 1.2em;
+    font-size: 1em;
     opacity: 0.9;
 }
 
 .main-content {
     background: var(--card-background);
-    padding: 40px;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .form-section {
-    margin-bottom: 30px;
-    padding-bottom: 30px;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -68,8 +68,8 @@ header h1 {
 
 .form-section h2 {
     color: var(--secondary-color);
-    margin-bottom: 20px;
-    font-size: 1.5em;
+    margin-bottom: 12px;
+    font-size: 1.2em;
 }
 
 /* Collapsible Sections */
@@ -126,14 +126,15 @@ header h1 {
 }
 
 .form-group {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
 }
 
 .form-group label {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     font-weight: 600;
     color: var(--text-primary);
+    font-size: 0.9em;
 }
 
 .form-group input[type="text"],
@@ -141,10 +142,10 @@ header h1 {
 .form-group input[type="password"],
 .form-group select {
     width: 100%;
-    padding: 12px;
-    border: 2px solid var(--border-color);
-    border-radius: 5px;
-    font-size: 1em;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.95em;
     transition: border-color 0.3s;
 }
 
@@ -319,20 +320,20 @@ footer {
 }
 
 .runner-section {
-    margin-bottom: 30px;
+    margin-bottom: 15px;
 }
 
 .runner-section h3 {
     color: var(--secondary-color);
-    margin-bottom: 15px;
-    font-size: 1.2em;
+    margin-bottom: 8px;
+    font-size: 1em;
 }
 
 .runner-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
 }
 
 .runner-option {
@@ -348,36 +349,37 @@ footer {
     position: relative;
     display: flex;
     flex-direction: column;
-    padding: 20px;
-    padding-top: 30px;
+    padding: 10px 12px;
+    padding-top: 24px;
     background: #f8f9fa;
-    border: 2px solid var(--border-color);
-    border-radius: 8px;
-    transition: all 0.3s;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    transition: all 0.2s;
     text-align: center;
+    min-height: 60px;
 }
 
 .runner-card strong {
     display: block;
     color: var(--text-primary);
-    font-size: 1.1em;
-    margin-bottom: 8px;
+    font-size: 0.9em;
+    margin-bottom: 2px;
 }
 
 .runner-card small {
     color: var(--text-secondary);
-    font-size: 0.9em;
+    font-size: 0.75em;
 }
 
 /* Checkbox indicator in corner of card */
 .checkbox-indicator {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--border-color);
-    border-radius: 4px;
+    top: 5px;
+    right: 5px;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
     background: white;
     transition: all 0.2s;
 }
@@ -386,10 +388,10 @@ footer {
     content: '';
     position: absolute;
     display: none;
-    left: 6px;
-    top: 2px;
-    width: 5px;
-    height: 10px;
+    left: 5px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
     border: solid white;
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
@@ -783,6 +785,57 @@ footer {
     color: var(--error-color);
 }
 
+/* ISO fetch status indicator */
+.iso-status {
+    font-size: 0.75em;
+    font-weight: normal;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+    display: inline-block;
+}
+
+.iso-status.loading {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.iso-status.success {
+    background: #e8f5e9;
+    color: #388e3c;
+}
+
+.iso-status.warning {
+    background: #fff3e0;
+    color: #f57c00;
+}
+
+.iso-status.error {
+    background: #ffebee;
+    color: #d32f2f;
+}
+
+/* ISO grid - more compact */
+.iso-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.iso-grid .form-group {
+    margin-bottom: 0;
+}
+
+.iso-grid label {
+    font-size: 0.9em;
+    margin-bottom: 4px;
+}
+
+.iso-grid select {
+    padding: 8px;
+    font-size: 0.9em;
+}
+
 @media (max-width: 768px) {
     .container {
         padding: 10px;
@@ -823,6 +876,10 @@ footer {
 
     .resource-value {
         font-size: 1.1em;
+    }
+
+    .iso-grid {
+        grid-template-columns: 1fr;
     }
 }
 

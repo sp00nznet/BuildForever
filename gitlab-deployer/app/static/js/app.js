@@ -25,12 +25,103 @@ function toggleSection(headerElement) {
     }
 }
 
+// Debounce helper function
+let autoFetchDebounceTimer = null;
+function debounce(func, wait) {
+    return function executedFunction(...args) {
+        clearTimeout(autoFetchDebounceTimer);
+        autoFetchDebounceTimer = setTimeout(() => func.apply(this, args), wait);
+    };
+}
+
+// Auto-fetch ISOs when Proxmox credentials are filled
+function tryAutoFetchIsos() {
+    const host = document.getElementById('proxmoxHost')?.value;
+    const user = document.getElementById('proxmoxUser')?.value;
+    const password = document.getElementById('proxmoxPassword')?.value;
+
+    // Only fetch if all required fields are filled
+    if (host && user && password) {
+        // Show loading state
+        const isoSection = document.getElementById('windowsIsoSection');
+        if (isoSection) {
+            isoSection.style.display = 'block';
+            const statusEl = document.getElementById('isoFetchStatus');
+            if (statusEl) {
+                statusEl.textContent = 'Connecting to Proxmox...';
+                statusEl.className = 'iso-status loading';
+            }
+        }
+        // Fetch ISOs silently (no blocking status messages)
+        refreshProxmoxIsosSilent();
+    }
+}
+
+// Silent ISO refresh (no blocking status messages)
+function refreshProxmoxIsosSilent() {
+    const config = getProviderConfig();
+
+    if (!config.host || !config.user || !config.password) {
+        return;
+    }
+
+    const fetchConfig = {
+        ...config,
+        storage: config.iso_storage || 'local'
+    };
+
+    fetch('/api/proxmox/isos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fetchConfig)
+    })
+    .then(response => response.json())
+    .then(data => {
+        const statusEl = document.getElementById('isoFetchStatus');
+        if (data.success) {
+            availableIsos = data.isos;
+            updateAllIsoDropdowns(data.isos);
+            if (statusEl) {
+                if (data.isos.length === 0) {
+                    statusEl.textContent = 'No ISOs found - upload ISOs to Proxmox storage';
+                    statusEl.className = 'iso-status warning';
+                } else {
+                    statusEl.textContent = `${data.isos.length} ISOs loaded`;
+                    statusEl.className = 'iso-status success';
+                }
+            }
+        } else {
+            if (statusEl) {
+                statusEl.textContent = 'Connection failed - check credentials';
+                statusEl.className = 'iso-status error';
+            }
+        }
+    })
+    .catch(error => {
+        const statusEl = document.getElementById('isoFetchStatus');
+        if (statusEl) {
+            statusEl.textContent = 'Connection error';
+            statusEl.className = 'iso-status error';
+        }
+    });
+}
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     const deploymentForm = document.getElementById('deploymentForm');
 
     // Load saved configurations on page load
     loadSavedConfigs();
+
+    // Auto-fetch ISOs when Proxmox credentials change
+    const debouncedAutoFetch = debounce(tryAutoFetchIsos, 800);
+    ['proxmoxHost', 'proxmoxUser', 'proxmoxPassword', 'proxmoxIsoStorage'].forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.addEventListener('input', debouncedAutoFetch);
+            field.addEventListener('change', debouncedAutoFetch);
+        }
+    });
 
     // Update runner count and resources on checkbox change
     document.querySelectorAll('input[name="runners"]').forEach(checkbox => {
