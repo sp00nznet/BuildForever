@@ -1342,22 +1342,22 @@ echo GitLab Runner installation complete!
         }
 
         # ISO attachment - set boot order based on whether ISO is present
-        # Use ide0 for primary boot CD (Windows/Linux ISO) and ide1 for secondary (VirtIO)
-        # This is more compatible with UEFI boot than using ide2/ide3
+        # Use IDE for CD-ROMs which is more compatible with both SeaBIOS and OVMF
         if iso:
-            params['ide0'] = f'{iso},media=cdrom'
+            params['ide2'] = f'{iso},media=cdrom'
             # Boot from CD-ROM first for installation, then hard drive
-            params['boot'] = 'order=ide0;scsi0'
+            params['boot'] = 'order=ide2;scsi0'
         else:
             params['boot'] = 'order=scsi0'
 
         # VirtIO drivers ISO attachment (secondary CD-ROM for Windows)
         if virtio_iso:
-            params['ide1'] = f'{virtio_iso},media=cdrom'
+            params['ide3'] = f'{virtio_iso},media=cdrom'
 
         # Answer file ISO attachment (for autounattend.xml with Windows)
+        # Use sata0 for the answer file to avoid IDE conflicts
         if answer_iso:
-            params['ide2'] = f'{answer_iso},media=cdrom'
+            params['sata0'] = f'{answer_iso},media=cdrom'
 
         # macOS-specific configuration
         if is_macos:
@@ -1377,33 +1377,29 @@ echo GitLab Runner installation complete!
                     '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
                 ])
             })
-        # Windows-specific configuration - always use UEFI for GPT disk compatibility
+        # Windows-specific configuration - UEFI for GPT compatibility
         elif is_windows:
-            # Windows 11 and Server 2025 require TPM 2.0 and Secure Boot
+            # Windows 11 and Server 2025 require TPM 2.0
             needs_tpm = windows_version in ['windows-11', 'windows-server-2025']
 
-            # All Windows versions use UEFI (OVMF) for GPT partition compatibility
-            # efitype=4m provides 4MB EFI disk which is required for proper UEFI variable storage
-            # pre-enrolled-keys=1 includes Microsoft Secure Boot keys (required for Win11/Server2025)
+            # All Windows use UEFI (for GPT partitioning in autounattend.xml)
+            params.update({
+                'bios': 'ovmf',
+                'machine': 'q35',
+                'efidisk0': f'{storage}:1',
+                'ostype': 'win11' if needs_tpm else 'win10',
+            })
+
             if needs_tpm:
-                params.update({
-                    'bios': 'ovmf',
-                    'machine': 'q35',
-                    'efidisk0': f'{storage}:1,efitype=4m,pre-enrolled-keys=1',
-                    'ostype': 'win11',
-                    'tpmstate0': f'{storage}:1,version=v2.0',
-                })
-            else:
-                # Windows 10 and Server 2022 - UEFI but no TPM/Secure Boot required
-                params.update({
-                    'bios': 'ovmf',
-                    'machine': 'q35',
-                    'efidisk0': f'{storage}:1,efitype=4m',
-                    'ostype': 'win10',
-                })
+                params['tpmstate0'] = f'{storage}:1,version=v2.0'
         else:
             params['bios'] = bios
             params['machine'] = machine
+
+        # Debug: log the VM creation parameters
+        print(f"[DEBUG] Creating VM {vmid} with params:")
+        for key, value in sorted(params.items()):
+            print(f"[DEBUG]   {key}: {value}")
 
         task = self.proxmox.nodes(node).qemu.create(**params)
         return self.wait_for_task(node, task)
@@ -1449,10 +1445,10 @@ echo GitLab Runner installation complete!
 
             if eject_cdroms:
                 # Eject CD-ROMs by setting them to empty (none)
-                # These are the CD-ROM positions used for Windows installation (ide0=Windows, ide1=VirtIO, ide2=answer)
-                config_updates['ide0'] = 'none,media=cdrom'
-                config_updates['ide1'] = 'none,media=cdrom'
+                # These are the CD-ROM positions used for Windows installation
                 config_updates['ide2'] = 'none,media=cdrom'
+                config_updates['ide3'] = 'none,media=cdrom'
+                config_updates['sata0'] = 'none,media=cdrom'
 
             self.proxmox.nodes(node).qemu(vmid).config.put(**config_updates)
             return {'success': True, 'message': 'Boot configuration updated'}
