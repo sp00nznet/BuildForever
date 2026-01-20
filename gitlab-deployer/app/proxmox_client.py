@@ -1801,10 +1801,10 @@ apt-get install -y curl openssh-server ca-certificates tzdata perl
 {nfs_mount}
 {samba_mount}
 # Add GitLab repository
-curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
+curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
 
 # Install GitLab
-GITLAB_ROOT_PASSWORD="{admin_password}" EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ee
+GITLAB_ROOT_PASSWORD="{admin_password}" EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ce
 
 # Configure GitLab
 cat >> /etc/gitlab/gitlab.rb << 'GITLAB_CONFIG'
