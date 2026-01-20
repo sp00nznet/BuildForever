@@ -1342,20 +1342,22 @@ echo GitLab Runner installation complete!
         }
 
         # ISO attachment - set boot order based on whether ISO is present
+        # Use ide0 for primary boot CD (Windows/Linux ISO) and ide1 for secondary (VirtIO)
+        # This is more compatible with UEFI boot than using ide2/ide3
         if iso:
-            params['ide2'] = f'{iso},media=cdrom'
+            params['ide0'] = f'{iso},media=cdrom'
             # Boot from CD-ROM first for installation, then hard drive
-            params['boot'] = 'order=ide2;scsi0'
+            params['boot'] = 'order=ide0;scsi0'
         else:
             params['boot'] = 'order=scsi0'
 
         # VirtIO drivers ISO attachment (secondary CD-ROM for Windows)
         if virtio_iso:
-            params['ide3'] = f'{virtio_iso},media=cdrom'
+            params['ide1'] = f'{virtio_iso},media=cdrom'
 
         # Answer file ISO attachment (for autounattend.xml with Windows)
         if answer_iso:
-            params['sata0'] = f'{answer_iso},media=cdrom'
+            params['ide2'] = f'{answer_iso},media=cdrom'
 
         # macOS-specific configuration
         if is_macos:
@@ -1447,10 +1449,10 @@ echo GitLab Runner installation complete!
 
             if eject_cdroms:
                 # Eject CD-ROMs by setting them to empty (none)
-                # These are the common CD-ROM positions used for Windows installation
+                # These are the CD-ROM positions used for Windows installation (ide0=Windows, ide1=VirtIO, ide2=answer)
+                config_updates['ide0'] = 'none,media=cdrom'
+                config_updates['ide1'] = 'none,media=cdrom'
                 config_updates['ide2'] = 'none,media=cdrom'
-                config_updates['ide3'] = 'none,media=cdrom'
-                config_updates['sata0'] = 'none,media=cdrom'
 
             self.proxmox.nodes(node).qemu(vmid).config.put(**config_updates)
             return {'success': True, 'message': 'Boot configuration updated'}

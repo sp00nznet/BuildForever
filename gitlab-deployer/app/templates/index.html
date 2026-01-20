@@ -93,9 +93,9 @@
                     <button type="button" class="btn btn-small btn-secondary" onclick="testProxmoxConnection()">Test Connection</button>
 
                     <!-- Windows ISO Selection - Per Version -->
-                    <div id="windowsIsoSection" class="iso-selection-section" style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px; display: none;">
-                        <h4>Windows ISO Selection</h4>
-                        <p class="section-description">Select ISOs from your Proxmox storage for each Windows version you plan to deploy.</p>
+                    <div id="windowsIsoSection" class="iso-selection-section" style="margin-top: 15px; border-top: 1px solid #ddd; padding-top: 12px;">
+                        <h4 style="margin-bottom: 8px;">Windows ISO Selection <span id="isoFetchStatus" class="iso-status">Enter credentials to load ISOs</span></h4>
+                        <p class="section-description" style="margin-bottom: 10px;">Select ISOs for each Windows version. ISOs load automatically when credentials are entered.</p>
 
                         <div class="iso-grid">
                             <div class="form-group">
