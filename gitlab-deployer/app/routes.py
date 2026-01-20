@@ -704,7 +704,7 @@ def execute_proxmox_deployment(config, deployment_id):
                 bridge=bridge,
                 ip=gitlab_ip_config,
                 gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
-                password='root1',
+                password='root',
                 start=True
             )
 
@@ -798,7 +798,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         bridge=bridge,
                         ip=runner_ip_config,
                         gateway=network_gateway if runner_ip_config != 'dhcp' else None,
-                        password='root1',
+                        password='root',
                         start=True
                     )
 
