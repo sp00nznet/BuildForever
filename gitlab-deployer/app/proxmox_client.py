@@ -1365,34 +1365,71 @@ echo ============================================'''
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+        print(f"[PROVISION] Waiting for SSH on {ip}...")
         start_time = time.time()
         connected = False
+        last_error = None
         while time.time() - start_time < 120:
             try:
                 ssh.connect(ip, username='root', password='root1', timeout=10)
                 connected = True
+                print(f"[PROVISION] SSH connected to {ip}")
                 break
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
                 time.sleep(5)
 
         if not connected:
-            return {'success': False, 'error': 'Could not connect via SSH'}
+            return {'success': False, 'error': f'Could not connect via SSH after 120s: {last_error}'}
 
         try:
-            # Base64 encode script to avoid escaping issues with special characters
+            # Write script to file and execute with full logging
             script_b64 = base64.b64encode(script.encode()).decode()
-            stdin, stdout, stderr = ssh.exec_command(f'echo "{script_b64}" | base64 -d | bash -s', timeout=timeout)
+
+            # Create a wrapper that logs everything
+            wrapper_script = f'''
+echo "{script_b64}" | base64 -d > /tmp/provision_script.sh
+chmod +x /tmp/provision_script.sh
+echo "=== PROVISION START $(date) ===" | tee /var/log/provision.log
+/tmp/provision_script.sh 2>&1 | tee -a /var/log/provision.log
+EXIT_CODE=$?
+echo "=== PROVISION END $(date) EXIT_CODE=$EXIT_CODE ===" | tee -a /var/log/provision.log
+exit $EXIT_CODE
+'''
+            print(f"[PROVISION] Executing script on {ip} (timeout={timeout}s)...")
+            stdin, stdout, stderr = ssh.exec_command(wrapper_script, timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
+
+            print(f"[PROVISION] Script finished with exit_code={exit_code}")
+            if output:
+                # Log last 50 lines of output
+                output_lines = output.strip().split('\n')
+                print(f"[PROVISION] Output ({len(output_lines)} lines):")
+                for line in output_lines[-50:]:
+                    print(f"[PROVISION]   {line}")
+            if errors:
+                print(f"[PROVISION] Stderr: {errors[:500]}")
 
             ssh.close()
 
             if exit_code == 0:
                 return {'success': True, 'output': output}
             else:
-                return {'success': False, 'error': errors or output, 'exit_code': exit_code}
+                return {'success': False, 'error': errors or output, 'exit_code': exit_code, 'output': output}
         except Exception as e:
+            print(f"[PROVISION] Exception: {str(e)}")
+            try:
+                # Try to get the log file even if we failed
+                _, stdout_log, _ = ssh.exec_command('cat /var/log/provision.log 2>/dev/null | tail -100', timeout=10)
+                log_content = stdout_log.read().decode()
+                if log_content:
+                    print(f"[PROVISION] Log content before failure:")
+                    for line in log_content.strip().split('\n')[-30:]:
+                        print(f"[PROVISION]   {line}")
+            except:
+                pass
             ssh.close()
             return {'success': False, 'error': str(e)}
 
