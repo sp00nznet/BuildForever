@@ -1544,6 +1544,67 @@ def get_proxmox_isos():
         }), 400
 
 
+@bp.route('/api/proxmox/vm/reconfigure-boot', methods=['POST'])
+def reconfigure_vm_boot():
+    """Reconfigure VM boot order after OS installation.
+
+    This endpoint changes the boot order to boot from hard disk and optionally
+    ejects CD-ROM media. Use this after Windows/macOS installation completes
+    to ensure the VM boots from the installed OS.
+
+    Request body:
+        proxmox_url: Proxmox server URL
+        proxmox_user: Proxmox username
+        proxmox_password: Proxmox password (or token_value for API token)
+        proxmox_token_name: (optional) API token name
+        proxmox_node: Node where VM is running
+        vmid: VM ID to reconfigure
+        eject_cdroms: (optional, default true) Eject all CD-ROM media
+    """
+    data = request.json
+
+    required_fields = ['proxmox_url', 'proxmox_user', 'proxmox_node', 'vmid']
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({
+                'success': False,
+                'error': f'Missing required field: {field}'
+            }), 400
+
+    try:
+        client = ProxmoxClient(
+            host=data['proxmox_url'],
+            user=data['proxmox_user'],
+            password=data.get('proxmox_password'),
+            token_name=data.get('proxmox_token_name'),
+            token_value=data.get('proxmox_password') if data.get('proxmox_token_name') else None
+        )
+
+        eject_cdroms = data.get('eject_cdroms', True)
+        result = client.reconfigure_vm_boot(
+            node=data['proxmox_node'],
+            vmid=data['vmid'],
+            eject_cdroms=eject_cdroms
+        )
+
+        if result.get('success'):
+            return jsonify({
+                'success': True,
+                'message': 'VM boot configuration updated. The VM will now boot from the hard disk.'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error', 'Unknown error')
+            }), 400
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to reconfigure VM boot: {str(e)}'
+        }), 400
+
+
 # ============================================================================
 # Credentials API - Unified credential management for Windows/Linux/macOS
 # ============================================================================

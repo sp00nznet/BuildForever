@@ -1365,7 +1365,7 @@ echo GitLab Runner installation complete!
                 'machine': 'q35',
                 'vga': 'vmware',
                 'ostype': 'other',
-                'efidisk0': f'{storage}:1',
+                'efidisk0': f'{storage}:1,efitype=4m',
                 'args': ' '.join([
                     f'-device isa-applesmc,osk={osk}',
                     '-smbios type=2',
@@ -1377,24 +1377,28 @@ echo GitLab Runner installation complete!
             })
         # Windows-specific configuration - always use UEFI for GPT disk compatibility
         elif is_windows:
-            # Windows 11 and Server 2025 require TPM 2.0
+            # Windows 11 and Server 2025 require TPM 2.0 and Secure Boot
             needs_tpm = windows_version in ['windows-11', 'windows-server-2025']
 
             # All Windows versions use UEFI (OVMF) for GPT partition compatibility
-            params.update({
-                'bios': 'ovmf',
-                'machine': 'q35',
-                'efidisk0': f'{storage}:1',
-            })
-
+            # efitype=4m provides 4MB EFI disk which is required for proper UEFI variable storage
+            # pre-enrolled-keys=1 includes Microsoft Secure Boot keys (required for Win11/Server2025)
             if needs_tpm:
                 params.update({
+                    'bios': 'ovmf',
+                    'machine': 'q35',
+                    'efidisk0': f'{storage}:1,efitype=4m,pre-enrolled-keys=1',
                     'ostype': 'win11',
                     'tpmstate0': f'{storage}:1,version=v2.0',
                 })
             else:
-                # Windows 10 and Server 2022 - UEFI but no TPM required
-                params['ostype'] = 'win10'
+                # Windows 10 and Server 2022 - UEFI but no TPM/Secure Boot required
+                params.update({
+                    'bios': 'ovmf',
+                    'machine': 'q35',
+                    'efidisk0': f'{storage}:1,efitype=4m',
+                    'ostype': 'win10',
+                })
         else:
             params['bios'] = bios
             params['machine'] = machine
@@ -1421,6 +1425,54 @@ echo GitLab Runner installation complete!
     def get_vm_status(self, node, vmid):
         """Get VM status."""
         return self.proxmox.nodes(node).qemu(vmid).status.current.get()
+
+    def reconfigure_vm_boot(self, node, vmid, eject_cdroms=True):
+        """Reconfigure VM boot order after OS installation.
+
+        This changes the boot order to prioritize the hard disk and optionally
+        ejects CD-ROM media to prevent booting from installation media.
+
+        Args:
+            node: Proxmox node name
+            vmid: VM ID
+            eject_cdroms: If True, ejects all CD-ROM media (ide2, ide3, sata0)
+
+        Returns:
+            dict with success status
+        """
+        try:
+            config_updates = {
+                'boot': 'order=scsi0',  # Boot from hard disk only
+            }
+
+            if eject_cdroms:
+                # Eject CD-ROMs by setting them to empty (none)
+                # These are the common CD-ROM positions used for Windows installation
+                config_updates['ide2'] = 'none,media=cdrom'
+                config_updates['ide3'] = 'none,media=cdrom'
+                config_updates['sata0'] = 'none,media=cdrom'
+
+            self.proxmox.nodes(node).qemu(vmid).config.put(**config_updates)
+            return {'success': True, 'message': 'Boot configuration updated'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def delete_vm_cdrom(self, node, vmid, device):
+        """Delete a CD-ROM device from VM configuration.
+
+        Args:
+            node: Proxmox node name
+            vmid: VM ID
+            device: Device name (ide2, ide3, sata0)
+
+        Returns:
+            dict with success status
+        """
+        try:
+            self.proxmox.nodes(node).qemu(vmid).config.put(delete=device)
+            return {'success': True}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
 
 # =============================================================================
