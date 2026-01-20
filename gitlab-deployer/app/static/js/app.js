@@ -201,9 +201,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const enableSamba = document.getElementById('enableSamba')?.checked || false;
 
         // Collect form data
+        const runnerToken = document.getElementById('runnerToken')?.value || '';
         const deploymentData = {
             deploy_gitlab: deployGitlab,
             gitlab_url: gitlabMode === 'existing' ? gitlabUrl : '',
+            runner_token: gitlabMode === 'existing' ? runnerToken : '',
             domain: deployGitlab ? document.getElementById('domain').value : `runners-${Date.now()}`,
             email: deployGitlab ? document.getElementById('email').value : '',
             admin_password: deployGitlab ? document.getElementById('adminPassword').value : '',

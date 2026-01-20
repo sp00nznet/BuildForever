@@ -698,9 +698,9 @@ class ProxmoxClient:
             dns=dns
         )
 
-        # Generate post-install script for GitLab Runner
+        # Generate post-install script for GitLab Runner (always install if gitlab_url is provided)
         post_install_script = ''
-        if gitlab_url and runner_token:
+        if gitlab_url:
             post_install_script = self._get_windows_runner_setup_script(gitlab_url, runner_token)
 
         # SSH to Proxmox host to create the custom ISO
@@ -1153,6 +1153,34 @@ echo "SUCCESS: $ISO_PATH"
 
     def _get_windows_runner_setup_script(self, gitlab_url, runner_token):
         """Generate Windows batch script to install GitLab Runner after Windows setup."""
+        # Build the registration and service commands only if we have a token
+        if runner_token:
+            registration_cmds = f'''
+REM Register the runner
+cd C:\\GitLab-Runner
+gitlab-runner.exe register --non-interactive --url "{gitlab_url}" --registration-token "{runner_token}" --executor "shell" --description "windows-runner" --tag-list "windows,shell" --run-untagged="true" --locked="false"
+
+REM Install as Windows service
+gitlab-runner.exe install
+gitlab-runner.exe start
+
+echo GitLab Runner installation and registration complete!
+'''
+        else:
+            registration_cmds = f'''
+REM Runner token not provided - skipping registration
+REM You can register manually later with:
+REM   cd C:\\GitLab-Runner
+REM   gitlab-runner.exe register --url "{gitlab_url}" --token YOUR_TOKEN
+REM   gitlab-runner.exe install
+REM   gitlab-runner.exe start
+
+echo GitLab Runner binary installed. Registration skipped - no token provided.
+echo To register manually, open an Administrator command prompt and run:
+echo   cd C:\\GitLab-Runner
+echo   gitlab-runner.exe register --url {gitlab_url}
+'''
+
         return f'''@echo off
 REM GitLab Runner Installation Script
 REM This runs automatically after Windows installation completes
@@ -1163,18 +1191,9 @@ REM Create runner directory
 mkdir C:\\GitLab-Runner 2>nul
 
 REM Download GitLab Runner
+echo Downloading GitLab Runner binary...
 powershell -Command "Invoke-WebRequest -Uri 'https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe' -OutFile 'C:\\GitLab-Runner\\gitlab-runner.exe'"
-
-REM Register the runner
-cd C:\\GitLab-Runner
-gitlab-runner.exe register --non-interactive --url "{gitlab_url}" --registration-token "{runner_token}" --executor "shell" --description "windows-runner" --tag-list "windows,shell" --run-untagged="true" --locked="false"
-
-REM Install as Windows service
-gitlab-runner.exe install
-gitlab-runner.exe start
-
-echo GitLab Runner installation complete!
-'''
+{registration_cmds}'''
 
     # =========================================================================
     # Container (LXC) Management
