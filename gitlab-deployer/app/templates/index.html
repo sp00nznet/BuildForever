@@ -16,8 +16,10 @@
             <p class="subtitle">GitLab CI/CD Build Farm - Multi-Platform Runners</p>
         </header>
 
-        <div class="main-content">
-            <form id="deploymentForm">
+        <div class="two-column-layout">
+            <!-- Left Column: Form -->
+            <div class="left-column">
+                <form id="deploymentForm">
                 <!-- Saved Configurations Section -->
                 <div class="form-section collapsible">
                     <div class="section-header clickable" onclick="toggleSection(this)">
@@ -548,15 +550,18 @@
                     <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>
                 </div>
             </form>
+            </div><!-- end left-column -->
 
-            <div id="statusSection" class="status-section" style="display: none;">
-                <h2>Deployment Status</h2>
-                <div id="statusMessage" class="status-message"></div>
-                <div id="deploymentProgress" class="deployment-progress"></div>
-                <div id="deploymentLogs" class="logs"></div>
-                <button class="btn btn-secondary" onclick="hideStatus()">Close</button>
-            </div>
-        </div>
+            <!-- Right Column: Console/Status (always visible) -->
+            <div class="right-column">
+                <div id="statusSection" class="status-section">
+                    <h3>Console Output</h3>
+                    <div id="statusMessage" class="status-message"></div>
+                    <div id="deploymentProgress" class="deployment-progress"></div>
+                    <div id="deploymentLogs" class="logs"></div>
+                </div>
+            </div><!-- end right-column -->
+        </div><!-- end two-column-layout -->
 
         <footer>
             <p>BuildForever v2.0 | Multi-Platform CI/CD Build Farm</p>
