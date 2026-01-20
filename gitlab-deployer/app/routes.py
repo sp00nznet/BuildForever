@@ -759,6 +759,9 @@ def execute_proxmox_deployment(config, deployment_id):
                     print(f"[PROVISION] GitLab installation FAILED: {error_msg}")
                     created[-1]['status'] = 'provisioning_failed'
                     errors.append(f"GitLab provisioning failed: {error_msg}")
+                # Include log in response
+                created[-1]['provision_log'] = prov_result.get('log', [])
+                created[-1]['provision_log_file'] = prov_result.get('log_file', '')
             else:
                 errors.append(f'GitLab Server: {result.get("error", "Creation failed")}')
 
@@ -2079,3 +2082,29 @@ def get_providers():
             }
         }
     })
+
+
+@bp.route('/api/provision-log/<int:vmid>')
+def get_provision_log(vmid):
+    """Get the provision log for a specific VM/container."""
+    log_file = Path(__file__).parent.parent.parent / 'logs' / f'provision_{vmid}.log'
+    if log_file.exists():
+        try:
+            with open(log_file, 'r') as f:
+                content = f.read()
+            return jsonify({
+                'success': True,
+                'vmid': vmid,
+                'log': content.split('\n'),
+                'log_file': str(log_file)
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to read log: {str(e)}'
+            }), 500
+    else:
+        return jsonify({
+            'success': False,
+            'error': f'No log file found for vmid {vmid}'
+        }), 404

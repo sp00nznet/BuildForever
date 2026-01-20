@@ -1357,13 +1357,26 @@ echo ============================================'''
         """Execute a provisioning script inside a container via SSH."""
         paramiko = _get_paramiko()
 
+        # Build log entries that will be returned in response
+        log = []
+        def logmsg(msg):
+            log.append(msg)
+            print(f"[PROVISION] {msg}")
+
+        # Also write to a file for persistence
+        import os
+        log_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f'provision_{vmid}.log')
+
         ip = self.get_container_ip(node, vmid)
         if not ip:
-            print(f"[PROVISION] ERROR: Could not get container IP for vmid={vmid}")
-            return {'success': False, 'error': 'Could not get container IP'}
+            logmsg(f"ERROR: Could not get container IP for vmid={vmid}")
+            self._write_log(log_file, log)
+            return {'success': False, 'error': 'Could not get container IP', 'log': log, 'log_file': log_file}
 
-        print(f"[PROVISION] Container {vmid} has IP {ip}")
-        print(f"[PROVISION] Waiting for SSH to be ready...")
+        logmsg(f"Container {vmid} has IP {ip}")
+        logmsg(f"Waiting for SSH to be ready...")
 
         # Wait for SSH to be ready
         ssh = paramiko.SSHClient()
@@ -1376,20 +1389,21 @@ echo ============================================'''
             try:
                 ssh.connect(ip, username='root', password='root1', timeout=10)
                 connected = True
-                print(f"[PROVISION] SSH connected to {ip}")
+                logmsg(f"SSH connected to {ip}")
                 break
             except Exception as e:
                 last_error = str(e)
                 time.sleep(5)
 
         if not connected:
-            print(f"[PROVISION] ERROR: SSH connection failed after 120s: {last_error}")
-            return {'success': False, 'error': f'Could not connect via SSH: {last_error}'}
+            logmsg(f"ERROR: SSH connection failed after 120s: {last_error}")
+            self._write_log(log_file, log)
+            return {'success': False, 'error': f'Could not connect via SSH: {last_error}', 'log': log, 'log_file': log_file}
 
         try:
             # Base64 encode script to avoid escaping issues with special characters
             script_b64 = base64.b64encode(script.encode()).decode()
-            print(f"[PROVISION] Executing script (timeout={timeout}s)...")
+            logmsg(f"Executing script (timeout={timeout}s)...")
             stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
@@ -1397,22 +1411,35 @@ echo ============================================'''
 
             ssh.close()
 
-            print(f"[PROVISION] Script finished with exit_code={exit_code}")
+            logmsg(f"Script finished with exit_code={exit_code}")
             if output:
-                print(f"[PROVISION] Output ({len(output)} chars):")
-                for line in output.strip().split('\n')[-30:]:
-                    print(f"[PROVISION]   {line}")
+                logmsg(f"Output ({len(output)} chars):")
+                for line in output.strip().split('\n'):
+                    logmsg(f"  {line}")
             if errors:
-                print(f"[PROVISION] Stderr: {errors[:1000]}")
+                logmsg(f"Stderr:")
+                for line in errors.strip().split('\n'):
+                    logmsg(f"  {line}")
+
+            self._write_log(log_file, log)
 
             if exit_code == 0:
-                return {'success': True, 'output': output}
+                return {'success': True, 'output': output, 'log': log, 'log_file': log_file}
             else:
-                return {'success': False, 'error': errors or output, 'exit_code': exit_code}
+                return {'success': False, 'error': errors or output, 'exit_code': exit_code, 'log': log, 'log_file': log_file}
         except Exception as e:
-            print(f"[PROVISION] ERROR: Exception during script execution: {str(e)}")
+            logmsg(f"ERROR: Exception during script execution: {str(e)}")
             ssh.close()
-            return {'success': False, 'error': str(e)}
+            self._write_log(log_file, log)
+            return {'success': False, 'error': str(e), 'log': log, 'log_file': log_file}
+
+    def _write_log(self, log_file, log_entries):
+        """Write log entries to file."""
+        try:
+            with open(log_file, 'w') as f:
+                f.write('\n'.join(log_entries))
+        except Exception as e:
+            print(f"[PROVISION] Failed to write log file: {e}")
 
     # =========================================================================
     # VM (QEMU) Management
