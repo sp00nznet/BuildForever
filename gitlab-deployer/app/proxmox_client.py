@@ -1384,7 +1384,7 @@ echo ============================================'''
             if connected:
                 try:
                     script_b64 = base64.b64encode(script.encode()).decode()
-                    exec_cmd = f'echo {script_b64} | base64 -d | bash'
+                    exec_cmd = f'echo "{script_b64}" | base64 -d | bash -s'
 
                     stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
                     exit_code = stdout.channel.recv_exit_status()
