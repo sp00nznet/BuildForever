@@ -1369,7 +1369,7 @@ echo ============================================'''
         connected = False
         while time.time() - start_time < 120:
             try:
-                ssh.connect(ip, username='root', password='root', timeout=10)
+                ssh.connect(ip, username='root', password='root1', timeout=10)
                 connected = True
                 break
             except Exception:

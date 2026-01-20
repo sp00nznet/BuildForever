@@ -666,7 +666,9 @@ def execute_proxmox_deployment(config, deployment_id):
         # =====================================================================
         # Step 1: Create GitLab Server (LXC Container) - Only if deploy_gitlab is True
         # =====================================================================
+        print(f"[DEPLOY] deploy_gitlab={deploy_gitlab}")
         if deploy_gitlab:
+          print(f"[DEPLOY] Creating GitLab container...")
           try:
             gitlab_vmid = client.get_next_vmid()
 
@@ -702,7 +704,7 @@ def execute_proxmox_deployment(config, deployment_id):
                 bridge=bridge,
                 ip=gitlab_ip_config,
                 gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
-                password='root',
+                password='root1',
                 start=True
             )
 
@@ -796,7 +798,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         bridge=bridge,
                         ip=runner_ip_config,
                         gateway=network_gateway if runner_ip_config != 'dhcp' else None,
-                        password='root',
+                        password='root1',
                         start=True
                     )
 
