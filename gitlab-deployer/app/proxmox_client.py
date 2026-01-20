@@ -888,14 +888,17 @@ echo "SUCCESS: $ISO_PATH"
         if use_uefi is None:
             use_uefi = windows_type in ['windows-11', 'windows-server-2025']
 
-        # Determine Windows image name based on type
-        image_names = {
-            'windows-10': 'Windows 10 Pro',
-            'windows-11': 'Windows 11 Pro',
-            'windows-server-2022': 'Windows Server 2022 SERVERSTANDARD',
-            'windows-server-2025': 'Windows Server 2025 SERVERSTANDARD',
+        # Determine Windows image index based on type
+        # Using INDEX is more reliable than NAME since exact names vary by ISO
+        # For consumer multi-edition ISOs: Pro is typically index 5 or 6
+        # For Server ISOs: Standard Desktop Experience is typically index 2
+        image_indices = {
+            'windows-10': '5',        # Windows 10 Pro (typical position)
+            'windows-11': '5',        # Windows 11 Pro (typical position)
+            'windows-server-2022': '2',  # Standard (Desktop Experience)
+            'windows-server-2025': '2',  # Standard (Desktop Experience)
         }
-        image_name = image_names.get(windows_type, 'Windows 10 Pro')
+        image_index = image_indices.get(windows_type, '1')
 
         # VirtIO driver paths for Windows Setup to find drivers on the VirtIO ISO (E:)
         # These allow Windows to detect the VirtIO SCSI disk during installation
@@ -1068,8 +1071,8 @@ echo "SUCCESS: $ISO_PATH"
                     </InstallTo>
                     <InstallFrom>
                         <MetaData wcm:action="add">
-                            <Key>/IMAGE/NAME</Key>
-                            <Value>{image_name}</Value>
+                            <Key>/IMAGE/INDEX</Key>
+                            <Value>{image_index}</Value>
                         </MetaData>
                     </InstallFrom>
                 </OSImage>
