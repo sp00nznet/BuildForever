@@ -579,6 +579,40 @@ function listVMs() {
     });
 }
 
+// Check provisioning status for all VMs
+function checkProvisioningStatus() {
+    fetch('/api/provisioning-status')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.status) {
+            let statusText = 'Provisioning Status:\\n';
+            let hasActive = false;
+            for (const [vmid, info] of Object.entries(data.status)) {
+                const statusIcon = info.status === 'complete' ? '✓' :
+                                   info.status === 'failed' || info.status === 'error' ? '✗' : '⟳';
+                statusText += `  ${statusIcon} VMID ${vmid}: ${info.message}\\n`;
+                if (info.error) {
+                    statusText += `     Error: ${info.error}\\n`;
+                }
+                if (!['complete', 'failed', 'error'].includes(info.status)) {
+                    hasActive = true;
+                }
+            }
+            appendLog(statusText);
+
+            // If there are active provisions, poll again in 10 seconds
+            if (hasActive) {
+                setTimeout(checkProvisioningStatus, 10000);
+            }
+        } else {
+            appendLog('No provisioning status available');
+        }
+    })
+    .catch(error => {
+        appendLog('Error checking provisioning status: ' + error.message);
+    });
+}
+
 // Toggle NFS configuration visibility
 function toggleNfsConfig() {
     const enableNfs = document.getElementById('enableNfs');
