@@ -1379,8 +1379,9 @@ echo ============================================'''
             return {'success': False, 'error': 'Could not connect via SSH'}
 
         try:
-            # Execute the script
-            stdin, stdout, stderr = ssh.exec_command(f'bash -c "{script}"', timeout=timeout)
+            # Base64 encode script to avoid escaping issues with special characters
+            script_b64 = base64.b64encode(script.encode()).decode()
+            stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
@@ -1763,10 +1764,10 @@ apt-get install -y curl openssh-server ca-certificates tzdata perl
 {nfs_mount}
 {samba_mount}
 # Add GitLab repository
-curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
+curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
 
 # Install GitLab
-GITLAB_ROOT_PASSWORD="{admin_password}" EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ee
+EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ce
 
 # Configure GitLab
 cat >> /etc/gitlab/gitlab.rb << 'GITLAB_CONFIG'
