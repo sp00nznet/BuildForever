@@ -1379,8 +1379,9 @@ echo ============================================'''
             return {'success': False, 'error': 'Could not connect via SSH'}
 
         try:
-            # Execute the script
-            stdin, stdout, stderr = ssh.exec_command(f'bash -c "{script}"', timeout=timeout)
+            # Base64 encode script to avoid escaping issues with special characters
+            script_b64 = base64.b64encode(script.encode()).decode()
+            stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
