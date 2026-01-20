@@ -593,49 +593,43 @@ function showRunnerStatus(runnerUrls) {
     progressDiv.innerHTML += '</ul>';
 }
 
-// Show status message
+// Show status message (console is always visible in right column)
 function showStatus(type, message) {
-    const statusSection = document.getElementById('statusSection');
     const statusMessage = document.getElementById('statusMessage');
+    const logsDiv = document.getElementById('deploymentLogs');
 
     statusMessage.className = 'status-message ' + type;
     statusMessage.textContent = message;
-    statusSection.style.display = 'block';
 
-    // Scroll to status
-    statusSection.scrollIntoView({ behavior: 'smooth' });
+    // Also log to console area with timestamp
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${message}\n`;
+    logsDiv.textContent = logEntry + logsDiv.textContent;
 }
 
 // Show deployment logs
 function showLogs(logs) {
     const logsDiv = document.getElementById('deploymentLogs');
-    logsDiv.textContent = logs;
-    logsDiv.style.display = 'block';
+    const timestamp = new Date().toLocaleTimeString();
+    logsDiv.textContent = `[${timestamp}] ${logs}\n` + logsDiv.textContent;
 }
 
 // Show loading spinner
 function showSpinner() {
-    const statusSection = document.getElementById('statusSection');
-    let spinner = document.querySelector('.spinner');
-
-    if (!spinner) {
-        spinner = document.createElement('div');
-        spinner.className = 'spinner';
-        statusSection.appendChild(spinner);
-    }
+    const statusMessage = document.getElementById('statusMessage');
+    statusMessage.innerHTML = '<span class="spinner-inline"></span> Working...';
+    statusMessage.className = 'status-message info';
 }
 
 // Hide loading spinner
 function hideSpinner() {
-    const spinner = document.querySelector('.spinner');
-    if (spinner) {
-        spinner.remove();
-    }
+    // Spinner is now inline, cleared when showStatus is called
 }
 
-// Hide status section
-function hideStatus() {
-    document.getElementById('statusSection').style.display = 'none';
+// Clear console (optional)
+function clearConsole() {
+    document.getElementById('deploymentLogs').textContent = '';
+    document.getElementById('statusMessage').textContent = '';
 }
 
 // Reset form
