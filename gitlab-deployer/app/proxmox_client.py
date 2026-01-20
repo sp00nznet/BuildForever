@@ -1502,30 +1502,70 @@ echo ============================================'''
                 ssh.close()
                 return {'success': False, 'error': f'Failed to push script to container: {push_error}'}
 
-            # Execute script inside container
-            print(f"[PCT_EXEC] Executing provisioning script inside container {vmid}...")
-            stdin, stdout, stderr = ssh.exec_command(
-                f'pct exec {vmid} -- bash {container_script}',
-                timeout=timeout
-            )
-            exit_code = stdout.channel.recv_exit_status()
-            output = stdout.read().decode()
-            errors = stderr.read().decode()
+            # Execute script inside container using background process
+            # This prevents SSH timeout from killing long-running scripts (like GitLab install)
+            log_file = '/tmp/provision.log'
+            status_file = '/tmp/provision.status'
 
-            # Cleanup temp files
+            print(f"[PCT_EXEC] Starting provisioning script in background...")
+
+            # Create wrapper that runs script, captures exit code, and writes status file
+            wrapper_cmd = f'''bash -c '
+                rm -f {status_file}
+                bash {container_script} > {log_file} 2>&1
+                echo $? > {status_file}
+            ' &'''
+
+            stdin, stdout, stderr = ssh.exec_command(f'pct exec {vmid} -- {wrapper_cmd}')
+            stdout.channel.recv_exit_status()  # Wait for background launch
+
+            # Cleanup temp file on Proxmox host
             ssh.exec_command(f'rm -f {temp_script}')
-            ssh.exec_command(f'pct exec {vmid} -- rm -f {container_script}')
 
+            # Poll for completion (check for status file)
+            print(f"[PCT_EXEC] Waiting for provisioning to complete (this may take 10-15 minutes)...")
+            poll_interval = 10  # seconds
+            max_wait = timeout  # Use the timeout parameter
+            waited = 0
+
+            while waited < max_wait:
+                time.sleep(poll_interval)
+                waited += poll_interval
+
+                # Check if status file exists (script completed)
+                stdin, stdout, stderr = ssh.exec_command(
+                    f'pct exec {vmid} -- cat {status_file} 2>/dev/null'
+                )
+                status_output = stdout.read().decode().strip()
+
+                if status_output:
+                    # Script completed - status_output contains exit code
+                    exit_code = int(status_output) if status_output.isdigit() else 1
+
+                    # Get the log output
+                    stdin, stdout, stderr = ssh.exec_command(
+                        f'pct exec {vmid} -- tail -100 {log_file} 2>/dev/null'
+                    )
+                    output = stdout.read().decode()
+
+                    ssh.close()
+
+                    if exit_code == 0:
+                        print(f"[PCT_EXEC] Provisioning completed successfully")
+                        return {'success': True, 'output': output, 'method': 'pct_exec'}
+                    else:
+                        print(f"[PCT_EXEC] Provisioning failed with exit code {exit_code}")
+                        print(f"[PCT_EXEC] Last 100 lines of log: {output[-1000:]}")
+                        return {'success': False, 'error': f'Script failed with exit code {exit_code}. Check {log_file} in container.', 'exit_code': exit_code}
+
+                # Print progress every minute
+                if waited % 60 == 0:
+                    print(f"[PCT_EXEC] Still waiting... ({waited}s elapsed)")
+
+            # Timeout - script is still running or hung
             ssh.close()
-
-            if exit_code == 0:
-                print(f"[PCT_EXEC] Provisioning completed successfully")
-                return {'success': True, 'output': output, 'method': 'pct_exec'}
-            else:
-                print(f"[PCT_EXEC] Provisioning failed with exit code {exit_code}")
-                print(f"[PCT_EXEC] stdout: {output[:500]}")
-                print(f"[PCT_EXEC] stderr: {errors[:500]}")
-                return {'success': False, 'error': errors or output, 'exit_code': exit_code}
+            print(f"[PCT_EXEC] Timeout after {max_wait}s - script may still be running")
+            return {'success': False, 'error': f'Provisioning timed out after {max_wait}s. Script may still be running - check {log_file} in container.'}
 
         except Exception as e:
             print(f"[PCT_EXEC] Exception: {str(e)}")
