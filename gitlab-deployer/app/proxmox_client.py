@@ -1359,7 +1359,11 @@ echo ============================================'''
 
         ip = self.get_container_ip(node, vmid)
         if not ip:
+            print(f"[PROVISION] ERROR: Could not get container IP for vmid={vmid}")
             return {'success': False, 'error': 'Could not get container IP'}
+
+        print(f"[PROVISION] Container {vmid} has IP {ip}")
+        print(f"[PROVISION] Waiting for SSH to be ready...")
 
         # Wait for SSH to be ready
         ssh = paramiko.SSHClient()
@@ -1367,20 +1371,25 @@ echo ============================================'''
 
         start_time = time.time()
         connected = False
+        last_error = None
         while time.time() - start_time < 120:
             try:
                 ssh.connect(ip, username='root', password='root1', timeout=10)
                 connected = True
+                print(f"[PROVISION] SSH connected to {ip}")
                 break
-            except Exception:
+            except Exception as e:
+                last_error = str(e)
                 time.sleep(5)
 
         if not connected:
-            return {'success': False, 'error': 'Could not connect via SSH'}
+            print(f"[PROVISION] ERROR: SSH connection failed after 120s: {last_error}")
+            return {'success': False, 'error': f'Could not connect via SSH: {last_error}'}
 
         try:
             # Base64 encode script to avoid escaping issues with special characters
             script_b64 = base64.b64encode(script.encode()).decode()
+            print(f"[PROVISION] Executing script (timeout={timeout}s)...")
             stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
@@ -1388,11 +1397,20 @@ echo ============================================'''
 
             ssh.close()
 
+            print(f"[PROVISION] Script finished with exit_code={exit_code}")
+            if output:
+                print(f"[PROVISION] Output ({len(output)} chars):")
+                for line in output.strip().split('\n')[-30:]:
+                    print(f"[PROVISION]   {line}")
+            if errors:
+                print(f"[PROVISION] Stderr: {errors[:1000]}")
+
             if exit_code == 0:
                 return {'success': True, 'output': output}
             else:
                 return {'success': False, 'error': errors or output, 'exit_code': exit_code}
         except Exception as e:
+            print(f"[PROVISION] ERROR: Exception during script execution: {str(e)}")
             ssh.close()
             return {'success': False, 'error': str(e)}
 
