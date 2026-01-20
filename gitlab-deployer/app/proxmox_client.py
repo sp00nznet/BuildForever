@@ -1353,7 +1353,7 @@ echo ============================================'''
             time.sleep(3)
         return None
 
-    def provision_container(self, node, vmid, script, timeout=600):
+    def provision_container(self, node, vmid, script, timeout=1800):
         """Execute a provisioning script inside a container via pct exec.
 
         Uses SSH to Proxmox host then pct exec into container.
