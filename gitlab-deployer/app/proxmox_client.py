@@ -1381,7 +1381,7 @@ echo ============================================'''
         try:
             # Base64 encode script to avoid escaping issues with special characters
             script_b64 = base64.b64encode(script.encode()).decode()
-            stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
+            stdin, stdout, stderr = ssh.exec_command(f'echo "{script_b64}" | base64 -d | bash -s', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()

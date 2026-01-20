@@ -749,7 +749,8 @@ def execute_proxmox_deployment(config, deployment_id):
                     letsencrypt_email=email if config.get('letsencrypt_enabled') else None,
                     storage_config=storage_config
                 )
-                prov_result = client.provision_container(selected_node, gitlab_vmid, script)
+                # GitLab install takes 10-15 minutes - use 30 minute timeout
+                prov_result = client.provision_container(selected_node, gitlab_vmid, script, timeout=1800)
                 if prov_result.get('success'):
                     print(f"[PROVISION] GitLab installation COMPLETE for VMID {gitlab_vmid}")
                     created[-1]['status'] = 'running'
