@@ -4,11 +4,16 @@ import subprocess
 import json
 import os
 import time
+import threading
 from pathlib import Path
 from functools import wraps
 from .models import SavedConfig, DeploymentHistory, SSHKey, Credential, init_db
 
 bp = Blueprint('main', __name__)
+
+# Global provisioning status tracker
+provisioning_status = {}
+provisioning_lock = threading.Lock()
 
 
 def check_gitlab_server(url, timeout=10):
@@ -287,6 +292,96 @@ def test_gitlab():
         'message': message,
         'gitlab_url': gitlab_url
     })
+
+
+@bp.route('/api/provision-gitlab', methods=['POST'])
+def provision_gitlab_manual():
+    """Manually trigger GitLab installation on an existing container."""
+    data = request.json
+    provider_config = data.get('provider_config', {})
+    vmid = data.get('vmid')
+    domain = data.get('domain', 'gitlab.local')
+    admin_password = data.get('admin_password', 'changeme')
+
+    if not vmid:
+        return jsonify({
+            'success': False,
+            'error': 'VMID is required'
+        }), 400
+
+    if not provider_config.get('host') or not provider_config.get('password'):
+        return jsonify({
+            'success': False,
+            'error': 'Proxmox host and password are required'
+        }), 400
+
+    try:
+        from .proxmox_client import ProxmoxClient, get_gitlab_install_script
+
+        client = ProxmoxClient(
+            host=provider_config['host'],
+            user=provider_config.get('user', 'root@pam'),
+            password=provider_config['password'],
+            verify_ssl=provider_config.get('verify_ssl', False)
+        )
+
+        # Get the node where the container is running
+        node = provider_config.get('node', 'pve')
+
+        # Generate and run the GitLab install script
+        script = get_gitlab_install_script(
+            domain=domain,
+            admin_password=admin_password,
+            letsencrypt_email=None,
+            storage_config={}
+        )
+
+        print(f"[PROVISION-MANUAL] Starting GitLab installation on VMID {vmid}...")
+        result = client.provision_container(node, vmid, script)
+
+        if result.get('success'):
+            print(f"[PROVISION-MANUAL] GitLab installation COMPLETE")
+            return jsonify({
+                'success': True,
+                'message': f'GitLab installation completed on VMID {vmid}',
+                'output': result.get('output', '')[:2000]  # Truncate output
+            })
+        else:
+            print(f"[PROVISION-MANUAL] GitLab installation FAILED: {result.get('error')}")
+            return jsonify({
+                'success': False,
+                'error': result.get('error', 'Unknown error'),
+                'exit_code': result.get('exit_code')
+            }), 500
+
+    except Exception as e:
+        print(f"[PROVISION-MANUAL] Exception: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@bp.route('/api/provisioning-status', methods=['GET'])
+def get_provisioning_status():
+    """Get the current provisioning status for all VMs."""
+    with provisioning_lock:
+        return jsonify({
+            'success': True,
+            'status': dict(provisioning_status)
+        })
+
+
+@bp.route('/api/provisioning-status/<int:vmid>', methods=['GET'])
+def get_vm_provisioning_status(vmid):
+    """Get provisioning status for a specific VM."""
+    with provisioning_lock:
+        status = provisioning_status.get(vmid, {'status': 'unknown'})
+        return jsonify({
+            'success': True,
+            'vmid': vmid,
+            'status': status
+        })
 
 
 @bp.route('/api/execute-deployment', methods=['POST'])
@@ -581,12 +676,24 @@ def execute_proxmox_deployment(config, deployment_id):
 
                 # Start provisioning in background - always run, pct exec uses VMID not IP
                 def provision_gitlab():
+                    def update_status(status, message, error=None):
+                        with provisioning_lock:
+                            provisioning_status[gitlab_vmid] = {
+                                'status': status,
+                                'message': message,
+                                'error': error,
+                                'timestamp': time.time()
+                            }
+                        print(f"[PROVISION] [{gitlab_vmid}] {status}: {message}")
+                        if error:
+                            print(f"[PROVISION] [{gitlab_vmid}] Error: {error}")
+
                     try:
-                        print(f"[PROVISION] Starting GitLab provisioning for VMID {gitlab_vmid}...")
+                        update_status('starting', 'Starting GitLab provisioning...')
 
                         # First inject credentials if specified
                         if deploy_credential:
-                            print(f"[PROVISION] Injecting credentials for user {deploy_credential['username']}...")
+                            update_status('credentials', f"Injecting credentials for user {deploy_credential['username']}...")
                             cred_script = get_linux_credential_script(
                                 username=deploy_credential['username'],
                                 password=deploy_credential.get('password'),
@@ -594,12 +701,12 @@ def execute_proxmox_deployment(config, deployment_id):
                             )
                             cred_result = client.provision_container(selected_node, gitlab_vmid, cred_script)
                             if not cred_result.get('success'):
-                                print(f"[PROVISION] Credential injection failed: {cred_result.get('error')}")
+                                update_status('warning', 'Credential injection failed', cred_result.get('error'))
                             else:
-                                print(f"[PROVISION] Credentials injected successfully")
+                                update_status('credentials_done', 'Credentials injected successfully')
 
                         # Then install GitLab
-                        print(f"[PROVISION] Installing GitLab (this may take 10-15 minutes)...")
+                        update_status('installing', 'Installing GitLab (this may take 10-15 minutes)...')
                         script = get_gitlab_install_script(
                             domain=domain,
                             admin_password=admin_password,
@@ -608,11 +715,11 @@ def execute_proxmox_deployment(config, deployment_id):
                         )
                         prov_result = client.provision_container(selected_node, gitlab_vmid, script)
                         if prov_result.get('success'):
-                            print(f"[PROVISION] GitLab installation COMPLETE for VMID {gitlab_vmid}")
+                            update_status('complete', 'GitLab installation complete!')
                         else:
-                            print(f"[PROVISION] GitLab installation FAILED: {prov_result.get('error')}")
+                            update_status('failed', 'GitLab installation failed', prov_result.get('error'))
                     except Exception as e:
-                        print(f"[PROVISION] GitLab provisioning EXCEPTION: {str(e)}")
+                        update_status('error', 'GitLab provisioning exception', str(e))
 
                 thread = threading.Thread(target=provision_gitlab, daemon=True)
                 thread.start()
