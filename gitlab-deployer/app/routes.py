@@ -324,9 +324,13 @@ def provision_gitlab_manual():
             password=provider_config['password'],
             verify_ssl=provider_config.get('verify_ssl', False)
         )
+        client.connect()  # MUST connect before using!
 
-        # Get the node where the container is running
-        node = provider_config.get('node', 'pve')
+        # Get the node where the container is running - try to auto-detect
+        nodes = client.get_nodes()
+        node = provider_config.get('node', '')
+        if not node or node not in nodes:
+            node = nodes[0] if nodes else 'pve'
 
         # Generate and run the GitLab install script
         script = get_gitlab_install_script(
