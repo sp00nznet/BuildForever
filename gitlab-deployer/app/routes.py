@@ -13,7 +13,10 @@ bp = Blueprint('main', __name__)
 
 def check_gitlab_server(url, timeout=10):
     """Check if a GitLab server is accessible and responding"""
-    import requests
+    try:
+        import requests
+    except ImportError:
+        return False, "requests library not installed. Run: pip install requests"
     try:
         # Try to access GitLab's health endpoint
         health_url = f"{url.rstrip('/')}/api/v4/version"

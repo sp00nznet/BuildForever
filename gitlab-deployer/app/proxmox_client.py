@@ -6,9 +6,42 @@ import tempfile
 import subprocess
 import hashlib
 import base64
-import paramiko
-import requests
 from io import StringIO
+
+# Lazy imports for optional dependencies - these are imported when needed
+# to avoid breaking the module if they're not installed
+_paramiko = None
+_requests = None
+
+
+def _get_paramiko():
+    """Lazy import of paramiko to provide better error messages."""
+    global _paramiko
+    if _paramiko is None:
+        try:
+            import paramiko
+            _paramiko = paramiko
+        except ImportError:
+            raise ImportError(
+                "paramiko is required for Proxmox SSH operations. "
+                "Install it with: pip install paramiko"
+            )
+    return _paramiko
+
+
+def _get_requests():
+    """Lazy import of requests to provide better error messages."""
+    global _requests
+    if _requests is None:
+        try:
+            import requests
+            _requests = requests
+        except ImportError:
+            raise ImportError(
+                "requests is required for Proxmox API operations. "
+                "Install it with: pip install requests"
+            )
+    return _requests
 
 
 class ProxmoxClient:
@@ -204,6 +237,7 @@ class ProxmoxClient:
         """
         import uuid
         import re
+        requests = _get_requests()
 
         if windows_type not in self.WINDOWS_PRODUCTS:
             return {'success': False, 'error': f'Unknown Windows type: {windows_type}'}
@@ -378,6 +412,7 @@ class ProxmoxClient:
         Returns the direct download URL if found, None otherwise.
         """
         import re
+        requests = _get_requests()
 
         eval_pages = {
             'windows-server-2022': 'https://www.microsoft.com/en-us/evalcenter/download-windows-server-2022',
@@ -430,6 +465,7 @@ class ProxmoxClient:
         This downloads directly from Apple's servers without needing an ISO.
         Returns path to the recovery image in Proxmox storage.
         """
+        requests = _get_requests()
         if version not in self.MACOS_BOARD_IDS:
             return {'success': False, 'error': f'Unknown macOS version: {version}'}
 
@@ -546,6 +582,7 @@ class ProxmoxClient:
         Prepare OpenCore bootloader for macOS VM.
         Downloads OpenCore and creates a bootable image for Proxmox.
         """
+        requests = _get_requests()
         if callback:
             callback({'status': 'preparing', 'message': 'Preparing OpenCore bootloader for macOS...'})
 
@@ -667,6 +704,7 @@ class ProxmoxClient:
             post_install_script = self._get_windows_runner_setup_script(gitlab_url, runner_token)
 
         # SSH to Proxmox host to create the custom ISO
+        paramiko = _get_paramiko()
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -778,6 +816,7 @@ echo "SUCCESS: $OUTPUT_ISO"
             dns=dns
         )
 
+        paramiko = _get_paramiko()
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -1223,6 +1262,7 @@ echo GitLab Runner installation complete!
             time.sleep(3)
 
         # SSH to Proxmox host and use pct exec
+        paramiko = _get_paramiko()
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -1911,12 +1951,15 @@ def get_nfs_mount_script_windows(nfs_share, mount_path='N:'):
         server = nfs_share
         path = '/'
 
+    # Convert Unix path to Windows path (replace / with \)
+    windows_path = path.replace('/', '\\')
+
     return f'''
 # Configure NFS shared storage
 Write-Host "Setting up NFS share..."
 Install-WindowsFeature -Name NFS-Client -ErrorAction SilentlyContinue
 $nfsDrive = "{mount_path}"
-$nfsPath = "\\\\{server}\\{path.replace('/', '\\')}"
+$nfsPath = "\\\\{server}\\{windows_path}"
 New-PSDrive -Name ($nfsDrive.TrimEnd(':')) -PSProvider FileSystem -Root $nfsPath -Persist -ErrorAction SilentlyContinue
 Write-Host "NFS share mounted at $nfsDrive"
 '''
