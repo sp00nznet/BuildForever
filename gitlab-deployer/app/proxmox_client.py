@@ -1306,29 +1306,8 @@ echo ============================================'''
         if result['success'] and start:
             time.sleep(2)
             self.start_container(node, vmid)
-            # Wait for container to boot
-            time.sleep(3)
-            # Set password via pct exec (API password param is unreliable)
-            if password:
-                self._set_container_password(node, vmid, password)
 
         return result
-
-    def _set_container_password(self, node, vmid, password):
-        """Set root password in container via pct exec."""
-        paramiko = _get_paramiko()
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(self.host, username='root', password=self.password, timeout=30)
-
-            # Use chpasswd to set root password
-            cmd = f'pct exec {vmid} -- bash -c "echo root:{password} | chpasswd"'
-            stdin, stdout, stderr = ssh.exec_command(cmd, timeout=30)
-            stdout.channel.recv_exit_status()
-            ssh.close()
-        except Exception as e:
-            print(f"[WARNING] Could not set container password via pct exec: {e}")
 
     def start_container(self, node, vmid):
         """Start a container."""
@@ -1374,92 +1353,34 @@ echo ============================================'''
             time.sleep(3)
         return None
 
-    def provision_container(self, node, vmid, script, timeout=600, container_password='buildforever'):
-        """Execute a provisioning script inside a container.
-
-        Tries two methods:
-        1. Direct SSH to container IP (requires SSH running in container)
-        2. Fallback: pct exec via SSH to Proxmox host (doesn't require SSH in container)
-        """
+    def provision_container(self, node, vmid, script, timeout=600):
+        """Execute a provisioning script inside a container via SSH."""
         paramiko = _get_paramiko()
 
-        # Method 1: Try direct SSH to container
         ip = self.get_container_ip(node, vmid)
-        if ip:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        if not ip:
+            return {'success': False, 'error': 'Could not get container IP'}
 
-            start_time = time.time()
-            connected = False
-            last_error = None
-            # Try for 60 seconds (reduced from 120 to fail faster to fallback)
-            while time.time() - start_time < 60:
-                try:
-                    ssh.connect(ip, username='root', password=container_password, timeout=10)
-                    connected = True
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    time.sleep(5)
-
-            if connected:
-                try:
-                    # Base64 encode and execute script
-                    script_b64 = base64.b64encode(script.encode()).decode()
-                    exec_cmd = f'echo "{script_b64}" | base64 -d | bash -s'
-
-                    stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
-                    exit_code = stdout.channel.recv_exit_status()
-                    output = stdout.read().decode()
-                    errors = stderr.read().decode()
-
-                    ssh.close()
-
-                    if exit_code == 0:
-                        return {'success': True, 'output': output, 'method': 'direct_ssh'}
-                    else:
-                        return {'success': False, 'error': errors or output, 'exit_code': exit_code}
-                except Exception as e:
-                    try:
-                        ssh.close()
-                    except Exception:
-                        pass
-                    # Fall through to pct exec method
-                    last_error = str(e)
-
-            print(f"[PROVISION] Direct SSH failed ({last_error}), trying pct exec via Proxmox host...")
-
-        # Method 2: Fallback to pct exec via SSH to Proxmox host
-        return self._provision_via_pct_exec(node, vmid, script, timeout)
-
-    def _provision_via_pct_exec(self, node, vmid, script, timeout=600):
-        """Execute provisioning script via pct exec (SSH to Proxmox host, then pct exec)."""
-        paramiko = _get_paramiko()
-
+        # Wait for SSH to be ready
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        try:
-            # Connect to Proxmox host
-            ssh.connect(self.host, username='root', password=self.password, timeout=30)
-        except Exception as e:
-            return {'success': False, 'error': f'Could not SSH to Proxmox host {self.host}: {str(e)}'}
-
-        try:
-            # First ensure container is running
-            stdin, stdout, stderr = ssh.exec_command(f'pct status {vmid}')
-            status_output = stdout.read().decode().strip()
-            if 'running' not in status_output.lower():
-                # Try to start it
-                ssh.exec_command(f'pct start {vmid}')
+        start_time = time.time()
+        connected = False
+        while time.time() - start_time < 120:
+            try:
+                ssh.connect(ip, username='root', password='root', timeout=10)
+                connected = True
+                break
+            except Exception:
                 time.sleep(5)
 
-            # Base64 encode the script and execute via pct exec
-            script_b64 = base64.b64encode(script.encode()).decode()
-            # Use pct exec to run the script inside the container
-            exec_cmd = f'pct exec {vmid} -- bash -c \'echo "{script_b64}" | base64 -d | bash -s\''
+        if not connected:
+            return {'success': False, 'error': 'Could not connect via SSH'}
 
-            stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
+        try:
+            # Execute the script
+            stdin, stdout, stderr = ssh.exec_command(f'bash -c "{script}"', timeout=timeout)
             exit_code = stdout.channel.recv_exit_status()
             output = stdout.read().decode()
             errors = stderr.read().decode()
@@ -1467,15 +1388,12 @@ echo ============================================'''
             ssh.close()
 
             if exit_code == 0:
-                return {'success': True, 'output': output, 'method': 'pct_exec'}
+                return {'success': True, 'output': output}
             else:
                 return {'success': False, 'error': errors or output, 'exit_code': exit_code}
         except Exception as e:
-            try:
-                ssh.close()
-            except Exception:
-                pass
-            return {'success': False, 'error': f'pct exec failed: {str(e)}'}
+            ssh.close()
+            return {'success': False, 'error': str(e)}
 
     # =========================================================================
     # VM (QEMU) Management

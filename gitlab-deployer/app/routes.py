@@ -342,7 +342,7 @@ def provision_gitlab_manual():
         )
 
         print(f"[PROVISION-MANUAL] Starting GitLab installation on VMID {vmid}...")
-        result = client.provision_container(node, vmid, script, container_password='buildforever')
+        result = client.provision_container(node, vmid, script)
 
         if result.get('success'):
             print(f"[PROVISION-MANUAL] GitLab installation COMPLETE")
@@ -630,14 +630,6 @@ def execute_proxmox_deployment(config, deployment_id):
         if credential_id:
             deploy_credential = Credential.get_by_id(credential_id, include_secrets=True)
 
-        # Container root password (Proxmox requires minimum 5 characters)
-        # Use credential password if available, otherwise use a secure default
-        container_password = 'buildforever'  # Default 5+ char password
-        if deploy_credential and deploy_credential.get('password'):
-            cred_pass = deploy_credential['password']
-            # Ensure password meets Proxmox minimum length requirement
-            container_password = cred_pass if len(cred_pass) >= 5 else 'buildforever'
-
         # Get network configuration
         network_config = config.get('network_config', {'use_dhcp': True})
         use_dhcp = network_config.get('use_dhcp', True)
@@ -710,7 +702,7 @@ def execute_proxmox_deployment(config, deployment_id):
                 bridge=bridge,
                 ip=gitlab_ip_config,
                 gateway=network_gateway if gitlab_ip_config != 'dhcp' else None,
-                password=container_password,
+                password='root',
                 start=True
             )
 
@@ -740,7 +732,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         password=deploy_credential.get('password'),
                         ssh_public_key=deploy_credential.get('ssh_public_key')
                     )
-                    cred_result = client.provision_container(selected_node, gitlab_vmid, cred_script, container_password=container_password)
+                    cred_result = client.provision_container(selected_node, gitlab_vmid, cred_script)
                     if not cred_result.get('success'):
                         print(f"[PROVISION] Credential injection failed: {cred_result.get('error')}")
                     else:
@@ -755,7 +747,7 @@ def execute_proxmox_deployment(config, deployment_id):
                     letsencrypt_email=email if config.get('letsencrypt_enabled') else None,
                     storage_config=storage_config
                 )
-                prov_result = client.provision_container(selected_node, gitlab_vmid, script, container_password=container_password)
+                prov_result = client.provision_container(selected_node, gitlab_vmid, script)
                 if prov_result.get('success'):
                     print(f"[PROVISION] GitLab installation COMPLETE for VMID {gitlab_vmid}")
                     created[-1]['status'] = 'running'
@@ -804,7 +796,7 @@ def execute_proxmox_deployment(config, deployment_id):
                         bridge=bridge,
                         ip=runner_ip_config,
                         gateway=network_gateway if runner_ip_config != 'dhcp' else None,
-                        password=container_password,
+                        password='root',
                         start=True
                     )
 
@@ -830,7 +822,7 @@ def execute_proxmox_deployment(config, deployment_id):
                                         password=cred.get('password'),
                                         ssh_public_key=cred.get('ssh_public_key')
                                     )
-                                    client.provision_container(selected_node, vmid, cred_script, container_password=container_password)
+                                    client.provision_container(selected_node, vmid, cred_script)
 
                                 # Then install runner
                                 # Note: registration_token would come from GitLab API after it's running
@@ -840,7 +832,7 @@ def execute_proxmox_deployment(config, deployment_id):
                                     'REGISTRATION_TOKEN' if final_gitlab_url else '',
                                     storage_config
                                 )
-                                client.provision_container(selected_node, vmid, script, container_password=container_password)
+                                client.provision_container(selected_node, vmid, script)
 
                         thread = threading.Thread(
                             target=provision_runner,
