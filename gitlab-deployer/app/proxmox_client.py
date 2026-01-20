@@ -1354,226 +1354,47 @@ echo ============================================'''
         return None
 
     def provision_container(self, node, vmid, script, timeout=600):
-        """Execute a provisioning script inside a container.
-
-        Tries two methods:
-        1. Direct SSH to container IP (faster if SSH is running)
-        2. Fallback: pct exec via SSH to Proxmox host (more reliable for fresh containers)
-        """
+        """Execute a provisioning script inside a container via SSH."""
         paramiko = _get_paramiko()
 
-        print(f"[PROVISION] Starting provisioning for container {vmid} on node {node}")
-
-        # Method 1: Try direct SSH to container
         ip = self.get_container_ip(node, vmid)
-        print(f"[PROVISION] Container IP: {ip}")
+        if not ip:
+            return {'success': False, 'error': 'Could not get container IP'}
 
-        if ip:
-            print(f"[PROVISION] Attempting direct SSH to {ip}...")
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-            start_time = time.time()
-            connected = False
-            last_error = None
-            # Try for 30 seconds before falling back (reduced from 60 - fresh containers won't have SSH)
-            while time.time() - start_time < 30:
-                try:
-                    ssh.connect(ip, username='root', password='root1', timeout=10)
-                    connected = True
-                    print(f"[PROVISION] Direct SSH connected!")
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    time.sleep(5)
-
-            if connected:
-                try:
-                    print(f"[PROVISION] Executing script via direct SSH...")
-                    script_b64 = base64.b64encode(script.encode()).decode()
-                    exec_cmd = f'echo "{script_b64}" | base64 -d | bash -s'
-
-                    stdin, stdout, stderr = ssh.exec_command(exec_cmd, timeout=timeout)
-                    exit_code = stdout.channel.recv_exit_status()
-                    output = stdout.read().decode()
-                    errors = stderr.read().decode()
-
-                    ssh.close()
-
-                    if exit_code == 0:
-                        print(f"[PROVISION] Direct SSH provisioning succeeded")
-                        return {'success': True, 'output': output, 'method': 'direct_ssh'}
-                    else:
-                        print(f"[PROVISION] Direct SSH script failed with exit code {exit_code}")
-                        return {'success': False, 'error': errors or output, 'exit_code': exit_code}
-                except Exception as e:
-                    try:
-                        ssh.close()
-                    except Exception:
-                        pass
-                    last_error = str(e)
-                    print(f"[PROVISION] Direct SSH exception: {last_error}")
-
-            print(f"[PROVISION] Direct SSH failed ({last_error}), trying pct exec via Proxmox host...")
-        else:
-            print(f"[PROVISION] No container IP found, going straight to pct exec...")
-
-        # Method 2: Fallback to pct exec via SSH to Proxmox host
-        return self._provision_via_pct_exec(node, vmid, script, timeout)
-
-    def _provision_via_pct_exec(self, node, vmid, script, timeout=600):
-        """Execute provisioning script via pct exec (SSH to Proxmox host, then pct exec into container).
-
-        Uses file-based approach to avoid command line length limits:
-        1. Write script to temp file on Proxmox host
-        2. Push file into container using pct push
-        3. Execute script inside container using pct exec
-        """
-        paramiko = _get_paramiko()
-
-        if not self.password:
-            return {'success': False, 'error': 'No Proxmox password configured for pct exec fallback'}
-
-        print(f"[PCT_EXEC] Connecting to Proxmox host {self.host}...")
+        # Wait for SSH to be ready
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        try:
-            ssh.connect(self.host, username='root', password=self.password, timeout=30)
-        except Exception as e:
-            print(f"[PCT_EXEC] SSH connection failed: {str(e)}")
-            return {'success': False, 'error': f'Could not SSH to Proxmox host {self.host}: {str(e)}'}
-
-        try:
-            # Test basic connectivity
-            print(f"[PCT_EXEC] Testing pct exec on container {vmid}...")
-            stdin, stdout, stderr = ssh.exec_command(f'pct exec {vmid} -- echo "pct_exec_test_ok"')
-            exit_code = stdout.channel.recv_exit_status()
-            test_output = stdout.read().decode().strip()
-            test_error = stderr.read().decode().strip()
-
-            if exit_code != 0 or 'pct_exec_test_ok' not in test_output:
-                # Container might not be running
-                print(f"[PCT_EXEC] Test failed (exit={exit_code}), checking container status...")
-                stdin, stdout, stderr = ssh.exec_command(f'pct status {vmid}')
-                status_output = stdout.read().decode().strip()
-                print(f"[PCT_EXEC] Container status: {status_output}")
-
-                if 'running' not in status_output.lower():
-                    print(f"[PCT_EXEC] Starting container {vmid}...")
-                    stdin, stdout, stderr = ssh.exec_command(f'pct start {vmid}')
-                    stdout.channel.recv_exit_status()
-                    time.sleep(10)  # Wait for container to fully start
-
-                    # Test again
-                    stdin, stdout, stderr = ssh.exec_command(f'pct exec {vmid} -- echo "pct_exec_test_ok"')
-                    exit_code = stdout.channel.recv_exit_status()
-                    test_output = stdout.read().decode().strip()
-                    if exit_code != 0 or 'pct_exec_test_ok' not in test_output:
-                        error_msg = f'pct exec test failed after starting container: exit={exit_code}, output={test_output}, error={test_error}'
-                        print(f"[PCT_EXEC] {error_msg}")
-                        ssh.close()
-                        return {'success': False, 'error': error_msg}
-
-            print(f"[PCT_EXEC] pct exec test passed")
-
-            # Write script to temp file on Proxmox host
-            temp_script = f'/tmp/provision_{vmid}_{int(time.time())}.sh'
-            print(f"[PCT_EXEC] Writing script to {temp_script} on Proxmox host...")
-
-            # Use SFTP to write the file (more reliable than echo for large scripts)
-            sftp = ssh.open_sftp()
-            with sftp.file(temp_script, 'w') as f:
-                f.write(script)
-            sftp.close()
-
-            # Make it executable
-            ssh.exec_command(f'chmod +x {temp_script}')
-
-            # Push script into container
-            container_script = '/tmp/provision.sh'
-            print(f"[PCT_EXEC] Pushing script into container {vmid}...")
-            stdin, stdout, stderr = ssh.exec_command(f'pct push {vmid} {temp_script} {container_script}')
-            exit_code = stdout.channel.recv_exit_status()
-            if exit_code != 0:
-                push_error = stderr.read().decode()
-                print(f"[PCT_EXEC] pct push failed: {push_error}")
-                ssh.exec_command(f'rm -f {temp_script}')
-                ssh.close()
-                return {'success': False, 'error': f'Failed to push script to container: {push_error}'}
-
-            # Execute script inside container using background process
-            # This prevents SSH timeout from killing long-running scripts (like GitLab install)
-            log_file = '/tmp/provision.log'
-            status_file = '/tmp/provision.status'
-
-            print(f"[PCT_EXEC] Starting provisioning script in background...")
-
-            # Create wrapper that runs script, captures exit code, and writes status file
-            wrapper_cmd = f'''bash -c '
-                rm -f {status_file}
-                bash {container_script} > {log_file} 2>&1
-                echo $? > {status_file}
-            ' &'''
-
-            stdin, stdout, stderr = ssh.exec_command(f'pct exec {vmid} -- {wrapper_cmd}')
-            stdout.channel.recv_exit_status()  # Wait for background launch
-
-            # Cleanup temp file on Proxmox host
-            ssh.exec_command(f'rm -f {temp_script}')
-
-            # Poll for completion (check for status file)
-            print(f"[PCT_EXEC] Waiting for provisioning to complete (this may take 10-15 minutes)...")
-            poll_interval = 10  # seconds
-            max_wait = timeout  # Use the timeout parameter
-            waited = 0
-
-            while waited < max_wait:
-                time.sleep(poll_interval)
-                waited += poll_interval
-
-                # Check if status file exists (script completed)
-                stdin, stdout, stderr = ssh.exec_command(
-                    f'pct exec {vmid} -- cat {status_file} 2>/dev/null'
-                )
-                status_output = stdout.read().decode().strip()
-
-                if status_output:
-                    # Script completed - status_output contains exit code
-                    exit_code = int(status_output) if status_output.isdigit() else 1
-
-                    # Get the log output
-                    stdin, stdout, stderr = ssh.exec_command(
-                        f'pct exec {vmid} -- tail -100 {log_file} 2>/dev/null'
-                    )
-                    output = stdout.read().decode()
-
-                    ssh.close()
-
-                    if exit_code == 0:
-                        print(f"[PCT_EXEC] Provisioning completed successfully")
-                        return {'success': True, 'output': output, 'method': 'pct_exec'}
-                    else:
-                        print(f"[PCT_EXEC] Provisioning failed with exit code {exit_code}")
-                        print(f"[PCT_EXEC] Last 100 lines of log: {output[-1000:]}")
-                        return {'success': False, 'error': f'Script failed with exit code {exit_code}. Check {log_file} in container.', 'exit_code': exit_code}
-
-                # Print progress every minute
-                if waited % 60 == 0:
-                    print(f"[PCT_EXEC] Still waiting... ({waited}s elapsed)")
-
-            # Timeout - script is still running or hung
-            ssh.close()
-            print(f"[PCT_EXEC] Timeout after {max_wait}s - script may still be running")
-            return {'success': False, 'error': f'Provisioning timed out after {max_wait}s. Script may still be running - check {log_file} in container.'}
-
-        except Exception as e:
-            print(f"[PCT_EXEC] Exception: {str(e)}")
+        start_time = time.time()
+        connected = False
+        while time.time() - start_time < 120:
             try:
-                ssh.close()
+                ssh.connect(ip, username='root', password='root1', timeout=10)
+                connected = True
+                break
             except Exception:
-                pass
-            return {'success': False, 'error': f'pct exec failed: {str(e)}'}
+                time.sleep(5)
+
+        if not connected:
+            return {'success': False, 'error': 'Could not connect via SSH'}
+
+        try:
+            # Base64 encode script to avoid escaping issues with special characters
+            script_b64 = base64.b64encode(script.encode()).decode()
+            stdin, stdout, stderr = ssh.exec_command(f'echo {script_b64} | base64 -d | bash', timeout=timeout)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode()
+            errors = stderr.read().decode()
+
+            ssh.close()
+
+            if exit_code == 0:
+                return {'success': True, 'output': output}
+            else:
+                return {'success': False, 'error': errors or output, 'exit_code': exit_code}
+        except Exception as e:
+            ssh.close()
+            return {'success': False, 'error': str(e)}
 
     # =========================================================================
     # VM (QEMU) Management
@@ -1943,10 +1764,10 @@ apt-get install -y curl openssh-server ca-certificates tzdata perl
 {nfs_mount}
 {samba_mount}
 # Add GitLab repository
-curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
+curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ee/script.deb.sh | bash
 
 # Install GitLab
-EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ce
+GITLAB_ROOT_PASSWORD="{admin_password}" EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ee
 
 # Configure GitLab
 cat >> /etc/gitlab/gitlab.rb << 'GITLAB_CONFIG'
