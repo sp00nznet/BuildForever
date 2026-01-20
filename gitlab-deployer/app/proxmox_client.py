@@ -698,10 +698,8 @@ class ProxmoxClient:
             dns=dns
         )
 
-        # Generate post-install script for GitLab Runner (always install if gitlab_url is provided)
-        post_install_script = ''
-        if gitlab_url:
-            post_install_script = self._get_windows_runner_setup_script(gitlab_url, runner_token)
+        # Generate post-install script for GitLab Runner (ALWAYS install the binary)
+        post_install_script = self._get_windows_runner_setup_script(gitlab_url, runner_token)
 
         # SSH to Proxmox host to create the custom ISO
         paramiko = _get_paramiko()
@@ -1153,8 +1151,9 @@ echo "SUCCESS: $ISO_PATH"
 
     def _get_windows_runner_setup_script(self, gitlab_url, runner_token):
         """Generate Windows batch script to install GitLab Runner after Windows setup."""
-        # Build the registration and service commands only if we have a token
-        if runner_token:
+        # Build the registration and service commands based on what info we have
+        if gitlab_url and runner_token:
+            # Full auto-registration
             registration_cmds = f'''
 REM Register the runner
 cd C:\\GitLab-Runner
@@ -1166,19 +1165,29 @@ gitlab-runner.exe start
 
 echo GitLab Runner installation and registration complete!
 '''
-        else:
+        elif gitlab_url:
+            # Have URL but no token
             registration_cmds = f'''
 REM Runner token not provided - skipping registration
-REM You can register manually later with:
-REM   cd C:\\GitLab-Runner
-REM   gitlab-runner.exe register --url "{gitlab_url}" --token YOUR_TOKEN
-REM   gitlab-runner.exe install
-REM   gitlab-runner.exe start
-
 echo GitLab Runner binary installed. Registration skipped - no token provided.
+echo.
 echo To register manually, open an Administrator command prompt and run:
 echo   cd C:\\GitLab-Runner
 echo   gitlab-runner.exe register --url {gitlab_url}
+echo   gitlab-runner.exe install
+echo   gitlab-runner.exe start
+'''
+        else:
+            # No URL, no token - just install binary
+            registration_cmds = '''
+REM No GitLab URL provided - skipping registration
+echo GitLab Runner binary installed.
+echo.
+echo To register manually, open an Administrator command prompt and run:
+echo   cd C:\\GitLab-Runner
+echo   gitlab-runner.exe register --url YOUR_GITLAB_URL --token YOUR_TOKEN
+echo   gitlab-runner.exe install
+echo   gitlab-runner.exe start
 '''
 
         return f'''@echo off
