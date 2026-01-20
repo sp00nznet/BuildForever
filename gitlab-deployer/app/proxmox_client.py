@@ -1153,56 +1153,113 @@ echo "SUCCESS: $ISO_PATH"
         """Generate Windows batch script to install GitLab Runner after Windows setup."""
         # Build the registration and service commands based on what info we have
         if gitlab_url and runner_token:
-            # Full auto-registration
+            # Full auto-registration with retry loop for GitLab availability
             registration_cmds = f'''
-REM Register the runner
+echo.
+echo Waiting for GitLab server to be available...
+echo This may take 10-15 minutes if GitLab is being installed...
+set GITLAB_URL={gitlab_url}
+set RETRY_COUNT=0
+set MAX_RETRIES=60
+
+:waitloop
+set /a RETRY_COUNT+=1
+echo [%TIME%] Attempt %RETRY_COUNT% of %MAX_RETRIES%: Checking %GITLAB_URL%
+powershell -Command "try {{ $r = Invoke-WebRequest -Uri '%GITLAB_URL%' -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop; exit 0 }} catch {{ exit 1 }}"
+if %errorlevel%==0 goto gitlab_ready
+if %RETRY_COUNT% geq %MAX_RETRIES% goto gitlab_timeout
+echo GitLab not ready yet, waiting 30 seconds...
+timeout /t 30 /nobreak >nul
+goto waitloop
+
+:gitlab_timeout
+echo.
+echo WARNING: GitLab did not become available after 30 minutes.
+echo Runner binary is installed but not registered.
+echo To register later, run: gitlab-runner.exe register --url {gitlab_url}
+goto scriptend
+
+:gitlab_ready
+echo.
+echo GitLab is available! Registering runner...
 cd C:\\GitLab-Runner
 gitlab-runner.exe register --non-interactive --url "{gitlab_url}" --registration-token "{runner_token}" --executor "shell" --description "windows-runner" --tag-list "windows,shell" --run-untagged="true" --locked="false"
-
-REM Install as Windows service
-gitlab-runner.exe install
-gitlab-runner.exe start
-
-echo GitLab Runner installation and registration complete!
+if %errorlevel%==0 (
+    echo Registration successful! Installing as service...
+    gitlab-runner.exe install
+    gitlab-runner.exe start
+    echo GitLab Runner installed and running!
+) else (
+    echo Registration failed. You may need to register manually.
+)
+goto scriptend
 '''
         elif gitlab_url:
             # Have URL but no token
             registration_cmds = f'''
-REM Runner token not provided - skipping registration
-echo GitLab Runner binary installed. Registration skipped - no token provided.
 echo.
-echo To register manually, open an Administrator command prompt and run:
+echo GitLab Runner binary installed.
+echo No registration token provided - manual registration required.
+echo.
+echo To register, open Admin Command Prompt and run:
 echo   cd C:\\GitLab-Runner
 echo   gitlab-runner.exe register --url {gitlab_url}
 echo   gitlab-runner.exe install
 echo   gitlab-runner.exe start
+goto scriptend
 '''
         else:
             # No URL, no token - just install binary
             registration_cmds = '''
-REM No GitLab URL provided - skipping registration
-echo GitLab Runner binary installed.
 echo.
-echo To register manually, open an Administrator command prompt and run:
+echo GitLab Runner binary installed.
+echo No GitLab URL provided - manual registration required.
+echo.
+echo To register, open Admin Command Prompt and run:
 echo   cd C:\\GitLab-Runner
-echo   gitlab-runner.exe register --url YOUR_GITLAB_URL --token YOUR_TOKEN
+echo   gitlab-runner.exe register --url YOUR_GITLAB_URL
 echo   gitlab-runner.exe install
 echo   gitlab-runner.exe start
+goto scriptend
 '''
 
         return f'''@echo off
 REM GitLab Runner Installation Script
 REM This runs automatically after Windows installation completes
 
-echo Installing GitLab Runner...
+echo ============================================
+echo GitLab Runner Installation
+echo ============================================
 
 REM Create runner directory
 mkdir C:\\GitLab-Runner 2>nul
+cd C:\\GitLab-Runner
 
-REM Download GitLab Runner
-echo Downloading GitLab Runner binary...
-powershell -Command "Invoke-WebRequest -Uri 'https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe' -OutFile 'C:\\GitLab-Runner\\gitlab-runner.exe'"
-{registration_cmds}'''
+REM Download GitLab Runner with retry
+echo Downloading GitLab Runner...
+set DL_RETRY=0
+:downloadloop
+set /a DL_RETRY+=1
+echo Download attempt %DL_RETRY%...
+powershell -Command "try {{ [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-windows-amd64.exe' -OutFile 'C:\\GitLab-Runner\\gitlab-runner.exe' -TimeoutSec 120 }} catch {{ Write-Host $_.Exception.Message; exit 1 }}"
+if exist C:\\GitLab-Runner\\gitlab-runner.exe goto download_ok
+if %DL_RETRY% geq 5 goto download_fail
+echo Download failed, retrying in 30 seconds...
+timeout /t 30 /nobreak >nul
+goto downloadloop
+
+:download_fail
+echo ERROR: Failed to download GitLab Runner after 5 attempts.
+goto scriptend
+
+:download_ok
+echo Download successful.
+{registration_cmds}
+:scriptend
+echo.
+echo ============================================
+echo Script completed at %TIME%
+echo ============================================'''
 
     # =========================================================================
     # Container (LXC) Management
