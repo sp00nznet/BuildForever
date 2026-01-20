@@ -1306,8 +1306,29 @@ echo ============================================'''
         if result['success'] and start:
             time.sleep(2)
             self.start_container(node, vmid)
+            # Wait for container to boot
+            time.sleep(3)
+            # Set password via pct exec (API password param is unreliable)
+            if password:
+                self._set_container_password(node, vmid, password)
 
         return result
+
+    def _set_container_password(self, node, vmid, password):
+        """Set root password in container via pct exec."""
+        paramiko = _get_paramiko()
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.host, username='root', password=self.password, timeout=30)
+
+            # Use chpasswd to set root password
+            cmd = f'pct exec {vmid} -- bash -c "echo root:{password} | chpasswd"'
+            stdin, stdout, stderr = ssh.exec_command(cmd, timeout=30)
+            stdout.channel.recv_exit_status()
+            ssh.close()
+        except Exception as e:
+            print(f"[WARNING] Could not set container password via pct exec: {e}")
 
     def start_container(self, node, vmid):
         """Start a container."""
