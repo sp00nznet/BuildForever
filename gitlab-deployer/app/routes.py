@@ -13,7 +13,10 @@ bp = Blueprint('main', __name__)
 
 def check_gitlab_server(url, timeout=10):
     """Check if a GitLab server is accessible and responding"""
-    import requests
+    try:
+        import requests
+    except ImportError:
+        return False, "requests library not installed. Run: pip install requests"
     try:
         # Try to access GitLab's health endpoint
         health_url = f"{url.rstrip('/')}/api/v4/version"
@@ -403,11 +406,20 @@ Traefik enabled: {config.get("traefik_enabled", False)}
 def execute_proxmox_deployment(config, deployment_id):
     """Deploy GitLab and runners to Proxmox VE with full provisioning."""
     import threading
-    from .proxmox_client import (
-        ProxmoxClient, get_gitlab_install_script, get_runner_install_script,
-        get_linux_credential_script, get_windows_credential_script,
-        get_windows_ssh_key_script, get_macos_credential_script
-    )
+
+    # Import proxmox_client with proper error handling for missing dependencies
+    try:
+        from .proxmox_client import (
+            ProxmoxClient, get_gitlab_install_script, get_runner_install_script,
+            get_linux_credential_script, get_windows_credential_script,
+            get_windows_ssh_key_script, get_macos_credential_script
+        )
+    except ImportError as e:
+        missing_module = str(e)
+        return jsonify({
+            'success': False,
+            'error': f'Missing required library: {missing_module}. Please install dependencies with: pip install proxmoxer paramiko requests'
+        }), 500
 
     provider_config = config.get('provider_config', {})
 

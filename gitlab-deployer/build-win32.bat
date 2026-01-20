@@ -101,15 +101,28 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo [3/5] Installing application dependencies...
-if exist "..\requirements.txt" (
-    %PYTHON_CMD% -m pip install -r ..\requirements.txt
-) else if exist "requirements.txt" (
+
+REM Install from local requirements.txt first
+if exist "requirements.txt" (
+    echo Installing from requirements.txt...
     %PYTHON_CMD% -m pip install -r requirements.txt
 )
 
+REM Install desktop-specific requirements
 if exist "requirements-desktop.txt" (
+    echo Installing from requirements-desktop.txt...
     %PYTHON_CMD% -m pip install -r requirements-desktop.txt
 )
+
+REM Also check parent directory
+if exist "..\requirements.txt" (
+    echo Installing from parent requirements.txt...
+    %PYTHON_CMD% -m pip install -r ..\requirements.txt
+)
+
+REM Explicitly ensure critical Proxmox dependencies are installed
+echo Ensuring Proxmox dependencies are installed...
+%PYTHON_CMD% -m pip install proxmoxer paramiko requests cryptography
 
 if %ERRORLEVEL% NEQ 0 (
     echo WARNING: Some application dependencies may have failed to install.
