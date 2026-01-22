@@ -459,7 +459,7 @@ class ProxmoxClient:
     # macOS Recovery Image (No ISO needed - uses Apple's recovery servers)
     # =========================================================================
 
-    def get_macos_recovery(self, node, storage, version='sonoma', callback=None):
+    def get_macos_recovery(self, node, storage, version='ventura', callback=None):
         """
         Download macOS recovery image using macrecovery method.
         This downloads directly from Apple's servers without needing an ISO.
@@ -577,46 +577,59 @@ class ProxmoxClient:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    def prepare_macos_opencore(self, node, storage, version='sonoma', callback=None):
+    def prepare_macos_opencore(self, node, storage, version='ventura', callback=None):
         """
         Prepare OpenCore bootloader for macOS VM.
-        Downloads OpenCore and creates a bootable image for Proxmox.
+        Downloads KVM-optimized OpenCore from thenickdude/KVM-Opencore.
+
+        IMPORTANT NOTES:
+        - Use OpenCore v21+ for modern macOS (Ventura 13.x, Sonoma 14.x)
+        - Ventura is most reliable; Sequoia/Sonoma may have issues on some hardware
+        - Requires Intel CPU (AMD is not reliably supported for macOS VMs)
+        - VirtIO disks are NOT visible in macOS Recovery - use SATA instead
         """
         requests = _get_requests()
         if callback:
-            callback({'status': 'preparing', 'message': 'Preparing OpenCore bootloader for macOS...'})
+            callback({'status': 'preparing', 'message': 'Preparing KVM-optimized OpenCore bootloader...'})
 
         try:
-            # Download latest OpenCore release
-            oc_release_url = 'https://api.github.com/repos/acidanthera/OpenCorePkg/releases/latest'
+            # Use thenickdude/KVM-Opencore which is pre-configured for KVM/Proxmox
+            # This is REQUIRED - stock OpenCore from acidanthera does not work with KVM
+            oc_release_url = 'https://api.github.com/repos/thenickdude/KVM-Opencore/releases/latest'
             headers = {'Accept': 'application/vnd.github.v3+json'}
 
             release_response = requests.get(oc_release_url, headers=headers, timeout=30)
             if release_response.status_code != 200:
-                return {'success': False, 'error': 'Failed to fetch OpenCore release info'}
+                return {'success': False, 'error': 'Failed to fetch KVM-Opencore release info'}
 
             release_data = release_response.json()
+            release_version = release_data.get('tag_name', 'unknown')
 
-            # Find the RELEASE zip
+            # Find the ISO file (pre-built bootable OpenCore image)
             oc_download_url = None
             for asset in release_data.get('assets', []):
-                if 'RELEASE' in asset['name'] and asset['name'].endswith('.zip'):
+                if asset['name'].endswith('.iso') and 'OpenCore' in asset['name']:
                     oc_download_url = asset['browser_download_url']
                     break
 
             if not oc_download_url:
-                return {'success': False, 'error': 'Could not find OpenCore release download'}
+                return {'success': False, 'error': 'Could not find KVM-Opencore ISO download'}
 
             if callback:
-                callback({'status': 'downloading', 'message': 'Downloading OpenCore bootloader...'})
+                callback({'status': 'downloading', 'message': f'Downloading KVM-Opencore {release_version}...'})
 
-            # Note: The actual OpenCore configuration for Proxmox VMs requires
-            # specific EFI setup. For now, return success with instructions.
             return {
                 'success': True,
-                'message': 'OpenCore preparation complete',
+                'message': f'KVM-Opencore {release_version} ready for download',
                 'opencore_url': oc_download_url,
-                'notes': 'macOS VM uses OSX-PROXMOX configuration with AppleSMC emulation'
+                'version': release_version,
+                'notes': (
+                    'IMPORTANT: macOS VM requirements:\n'
+                    '1. Intel CPU required (AMD not reliably supported)\n'
+                    '2. Use SATA for OS disk (VirtIO not visible in Recovery)\n'
+                    '3. Attach ISOs via USB storage in QEMU args for UEFI boot\n'
+                    '4. Ventura (13.x) is most reliable for new installations'
+                )
             }
 
         except Exception as e:
@@ -648,9 +661,9 @@ class ProxmoxClient:
         if vm_type.startswith('windows'):
             return self.get_windows_iso(node, storage, vm_type, callback)
 
-        # macOS
+        # macOS - default to Ventura (most reliable for KVM)
         if vm_type == 'macos':
-            return self.get_macos_recovery(node, storage, 'sonoma', callback)
+            return self.get_macos_recovery(node, storage, 'ventura', callback)
 
         return {'success': False, 'error': f'Unknown VM type: {vm_type}'}
 
@@ -1581,20 +1594,31 @@ echo ============================================'''
             params['sata0'] = f'{answer_iso},media=cdrom'
 
         # macOS-specific configuration
+        # NOTE: macOS requires:
+        # 1. Intel CPU (AMD is not reliably supported)
+        # 2. OpenCore v21+ from thenickdude/KVM-Opencore (not stock OpenCore)
+        # 3. SATA disk (VirtIO is NOT visible in macOS Recovery)
+        # 4. ISOs attached via USB storage in QEMU args (IDE/SATA not seen by UEFI)
+        # 5. Ventura (13.x) is most reliable; Sequoia/Sonoma may have compatibility issues
         if is_macos:
             osk = 'ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc'
+            # Use SATA for OS disk - VirtIO is not visible in macOS Recovery
+            params['sata2'] = f'{storage}:{disk_size}'
+            del params['scsi0']  # Remove VirtIO disk
             params.update({
                 'bios': 'ovmf',
                 'machine': 'q35',
                 'vga': 'vmware',
                 'ostype': 'other',
                 'efidisk0': f'{storage}:1,efitype=4m',
+                # Note: ISOs should be attached via USB storage in args for UEFI boot
+                # The ISO params are set separately - this args handles the core macOS emulation
                 'args': ' '.join([
                     f'-device isa-applesmc,osk={osk}',
                     '-smbios type=2',
-                    '-device usb-kbd,bus=ehci.0,port=2',
+                    '-device usb-kbd',
+                    '-device usb-tablet',
                     '-global nec-usb-xhci.msi=off',
-                    '-global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off',
                     '-cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc'
                 ])
             })
@@ -1896,6 +1920,7 @@ def get_gitlab_install_script(domain, admin_password, letsencrypt_email=None, st
 
     script = f'''#!/bin/bash
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
 # Update system
 apt-get update
@@ -1906,7 +1931,7 @@ apt-get install -y curl openssh-server ca-certificates tzdata perl
 curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
 
 # Install GitLab
-EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ce
+DEBIAN_FRONTEND=noninteractive EXTERNAL_URL="{external_url}" apt-get install -y gitlab-ce
 
 # Configure GitLab
 cat >> /etc/gitlab/gitlab.rb << 'GITLAB_CONFIG'
@@ -2015,29 +2040,43 @@ apt-get install -y gitlab-runner
     register_section = ''
     if gitlab_url and registration_token:
         register_section = f'''
-# Register runner
+# Register runner with shell executor (works in containers without Docker)
 gitlab-runner register \\
     --non-interactive \\
     --url "{gitlab_url}" \\
     --registration-token "{registration_token}" \\
-    --executor "docker" \\
-    --docker-image "alpine:latest" \\
+    --executor "shell" \\
+    --shell "bash" \\
     --description "{distro}-runner" \\
-    --tag-list "linux,{distro},docker" \\
+    --tag-list "linux,{distro},shell" \\
     --run-untagged="true" \\
     --locked="false"
 
-# Start runner
+# Reinstall runner to run as root (needed for apt-get in CI jobs)
+gitlab-runner stop || true
+gitlab-runner uninstall || true
+gitlab-runner install --user root --working-directory /root
 gitlab-runner start
 '''
 
     return f'''#!/bin/bash
 set -e
+export DEBIAN_FRONTEND=noninteractive
+
+# Fix DNS - use Google DNS as fallback
+if ! grep -q "8.8.8.8" /etc/resolv.conf 2>/dev/null; then
+    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+fi
+
 {install_qemu_ga}
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-systemctl enable docker
-systemctl start docker
+# Install essential packages including sudo
+apt-get update
+apt-get install -y sudo curl git ca-certificates
+
+# Install Docker (optional, for containers that support it)
+curl -fsSL https://get.docker.com | sh || echo "Docker installation skipped (may not be supported in LXC)"
+systemctl enable docker 2>/dev/null || true
+systemctl start docker 2>/dev/null || true
 {nfs_mount}
 {samba_mount}
 {install_runner}
@@ -2067,15 +2106,16 @@ def get_windows_runner_script(gitlab_url, registration_token, storage_config=Non
     register_section = ''
     if gitlab_url and registration_token:
         register_section = f'''
-# Register runner
+# Register runner with powershell (not pwsh)
 cd C:\\GitLab-Runner
 .\\gitlab-runner.exe register `
     --non-interactive `
     --url "{gitlab_url}" `
     --registration-token "{registration_token}" `
     --executor "shell" `
+    --shell "powershell" `
     --description "windows-runner" `
-    --tag-list "windows,shell" `
+    --tag-list "windows,shell,powershell" `
     --run-untagged="true" `
     --locked="false"
 
@@ -2086,6 +2126,30 @@ cd C:\\GitLab-Runner
 
     return f'''# PowerShell script for Windows GitLab Runner installation
 $ErrorActionPreference = "Stop"
+
+# Install Chocolatey package manager
+if (!(Get-Command choco -ErrorAction SilentlyContinue)) {{
+    Write-Host "Installing Chocolatey..."
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    # Refresh PATH
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+}}
+
+# Install Git for Windows
+if (!(Get-Command git -ErrorAction SilentlyContinue)) {{
+    Write-Host "Installing Git..."
+    choco install git -y --no-progress
+    # Add Git to PATH
+    $gitPath = "C:\\Program Files\\Git\\cmd"
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if ($machinePath -notlike "*$gitPath*") {{
+        [Environment]::SetEnvironmentVariable("Path", "$machinePath;$gitPath", "Machine")
+    }}
+    # Refresh PATH
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+}}
 
 # Create runner directory
 New-Item -ItemType Directory -Force -Path C:\\GitLab-Runner
@@ -2146,9 +2210,49 @@ brew services start gitlab-runner
     return f'''#!/bin/bash
 set -e
 
-# Install Homebrew if not present
+# Disable sleep/screensaver to keep runner available
+sudo pmset -a sleep 0
+sudo pmset -a displaysleep 0
+sudo pmset -a disksleep 0
+defaults write com.apple.screensaver idleTime 0
+
+# Install Xcode Command Line Tools non-interactively
+# Find the latest CLI tools from software update
+echo "Installing Xcode Command Line Tools..."
+touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+XCODE_PKG=$(softwareupdate -l 2>/dev/null | grep -o "Command Line Tools.*" | head -1 | tr -d '\\n' | sed 's/^[[:space:]]*//')
+if [ -n "$XCODE_PKG" ]; then
+    softwareupdate -i "$XCODE_PKG" --verbose || true
+fi
+rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+
+# Install Homebrew if not present (non-interactive)
 if ! command -v brew &> /dev/null; then
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    echo "Installing Homebrew..."
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # Add Homebrew to PATH for Apple Silicon and Intel
+    if [ -f /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+    elif [ -f /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+fi
+
+# Install Node.js (required for many CI jobs)
+echo "Installing Node.js..."
+if ! command -v node &> /dev/null; then
+    # Try Homebrew first, fall back to direct download
+    brew install node || {{
+        NODE_VERSION="20.11.0"
+        curl -fsSL "https://nodejs.org/dist/v${{NODE_VERSION}}/node-v${{NODE_VERSION}}-darwin-x64.tar.gz" -o /tmp/node.tar.gz
+        sudo mkdir -p /usr/local/node
+        sudo tar -xzf /tmp/node.tar.gz -C /usr/local/node --strip-components=1
+        sudo ln -sf /usr/local/node/bin/node /usr/local/bin/node
+        sudo ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
+        sudo ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
+        rm /tmp/node.tar.gz
+    }}
 fi
 
 # Install GitLab Runner
@@ -2156,11 +2260,8 @@ brew install gitlab-runner
 {nfs_mount}
 {samba_mount}
 {register_section}
-# Install Xcode command line tools
-xcode-select --install 2>/dev/null || true
-
 # Install common build tools
-brew install cocoapods fastlane
+brew install cocoapods fastlane 2>/dev/null || true
 
 echo "GitLab Runner (macOS) installation complete!"
 '''
