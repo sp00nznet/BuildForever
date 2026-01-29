@@ -98,10 +98,10 @@ class ProxmoxClient:
 
     # Runner resource configurations
     RUNNER_RESOURCES = {
-        'windows-10': {'cores': 4, 'memory': 8192, 'disk': 60, 'type': 'vm'},
-        'windows-11': {'cores': 4, 'memory': 8192, 'disk': 60, 'type': 'vm'},
-        'windows-server-2022': {'cores': 4, 'memory': 16384, 'disk': 80, 'type': 'vm'},
-        'windows-server-2025': {'cores': 4, 'memory': 16384, 'disk': 80, 'type': 'vm'},
+        'windows-10': {'cores': 4, 'memory': 8192, 'disk': 100, 'type': 'vm'},
+        'windows-11': {'cores': 4, 'memory': 8192, 'disk': 100, 'type': 'vm'},
+        'windows-server-2022': {'cores': 4, 'memory': 16384, 'disk': 120, 'type': 'vm'},
+        'windows-server-2025': {'cores': 4, 'memory': 16384, 'disk': 120, 'type': 'vm'},
         'debian': {'cores': 2, 'memory': 4096, 'disk': 40, 'type': 'lxc'},
         'ubuntu': {'cores': 2, 'memory': 4096, 'disk': 40, 'type': 'lxc'},
         'arch': {'cores': 2, 'memory': 4096, 'disk': 40, 'type': 'lxc'},

@@ -3,10 +3,10 @@ const GITLAB_SERVER_RESOURCES = { cpu: 4, memory: 8, storage: 50 };
 
 // Runner resource requirements (CPU cores, Memory GB, Storage GB)
 const RUNNER_RESOURCES = {
-    'windows-10': { cpu: 4, memory: 8, storage: 60 },
-    'windows-11': { cpu: 4, memory: 8, storage: 60 },
-    'windows-server-2022': { cpu: 4, memory: 16, storage: 80 },
-    'windows-server-2025': { cpu: 4, memory: 16, storage: 80 },
+    'windows-10': { cpu: 4, memory: 8, storage: 100 },
+    'windows-11': { cpu: 4, memory: 8, storage: 100 },
+    'windows-server-2022': { cpu: 4, memory: 16, storage: 120 },
+    'windows-server-2025': { cpu: 4, memory: 16, storage: 120 },
     'debian': { cpu: 2, memory: 4, storage: 40 },
     'ubuntu': { cpu: 2, memory: 4, storage: 40 },
     'arch': { cpu: 2, memory: 4, storage: 40 },
