@@ -84,6 +84,11 @@ SUPPORTED_RUNNERS = {
     'macos': {'name': 'macOS', 'tags': 'macos,darwin'}
 }
 
+SUPPORTED_SERVICES = {
+    'harbor': {'name': 'Harbor Registry', 'description': 'Enterprise container registry'},
+    'rancher': {'name': 'Rancher Server', 'description': 'Kubernetes management platform'}
+}
+
 @bp.route('/')
 def index():
     """Main deployment interface"""
@@ -191,7 +196,13 @@ def deploy():
         'samba_mount_path': data.get('samba_mount_path', '/mnt/samba'),
         'samba_username': data.get('samba_username', ''),
         'samba_password': data.get('samba_password', ''),
-        'samba_domain': data.get('samba_domain', '')
+        'samba_domain': data.get('samba_domain', ''),
+        # Additional services (Harbor, Rancher)
+        'services': data.get('services', []),
+        'harbor_admin_password': data.get('harbor_admin_password', ''),
+        'harbor_trivy': data.get('harbor_trivy', True),
+        'harbor_gitlab_integration': data.get('harbor_gitlab_integration', True),
+        'rancher_bootstrap_password': data.get('rancher_bootstrap_password', '')
     }
 
     # Save config to file for deployment script
@@ -238,6 +249,18 @@ def deploy():
         if deploy_gitlab or gitlab_url:
             deployment_steps.append(f'Register {runner_name} runner to GitLab')
 
+    # Add additional services deployment steps
+    services = data.get('services', [])
+    if 'harbor' in services:
+        deployment_steps.append('Deploy Harbor Container Registry')
+        deployment_steps.append('Configure Harbor and start services')
+        if config.get('harbor_gitlab_integration') and (deploy_gitlab or gitlab_url):
+            deployment_steps.append('Configure GitLab CI/CD integration with Harbor')
+
+    if 'rancher' in services:
+        deployment_steps.append('Deploy Rancher Server')
+        deployment_steps.append('Initialize Rancher and generate bootstrap password')
+
     if deploy_gitlab or gitlab_url:
         deployment_steps.append('Verify all runners are connected')
     deployment_steps.append('Deployment complete')
@@ -247,15 +270,22 @@ def deploy():
     session['deployment_steps'] = deployment_steps
 
     # Generate deployment message
+    services = data.get('services', [])
+    service_names = [SUPPORTED_SERVICES[s]['name'] for s in services if s in SUPPORTED_SERVICES]
+    service_str = f' + {", ".join(service_names)}' if service_names else ''
+
     if deploy_gitlab:
-        message = f'Deployment plan created: GitLab Server + {len(runners)} runner(s)'
-        estimated_time = f'{15 + len(runners) * 5}-{30 + len(runners) * 10} minutes'
+        message = f'Deployment plan created: GitLab Server + {len(runners)} runner(s){service_str}'
+        base_time = 15 + len(runners) * 5 + len(services) * 10
+        estimated_time = f'{base_time}-{base_time * 2} minutes'
     elif gitlab_url:
-        message = f'Deployment plan created: {len(runners)} runner(s) connecting to existing GitLab'
-        estimated_time = f'{5 + len(runners) * 5}-{10 + len(runners) * 10} minutes'
+        message = f'Deployment plan created: {len(runners)} runner(s) connecting to existing GitLab{service_str}'
+        base_time = 5 + len(runners) * 5 + len(services) * 10
+        estimated_time = f'{base_time}-{base_time * 2} minutes'
     else:
-        message = f'Deployment plan created: {len(runners)} standalone runner(s)'
-        estimated_time = f'{5 + len(runners) * 5}-{10 + len(runners) * 10} minutes'
+        message = f'Deployment plan created: {len(runners)} standalone runner(s){service_str}'
+        base_time = 5 + len(runners) * 5 + len(services) * 10
+        estimated_time = f'{base_time}-{base_time * 2} minutes'
 
     return jsonify({
         'success': True,
@@ -1032,6 +1062,166 @@ def execute_proxmox_deployment(config, deployment_id):
 
             except Exception as e:
                 errors.append(f'{runner}: {str(e)}')
+
+        # =====================================================================
+        # Step 3: Deploy Additional Services (Harbor, Rancher)
+        # =====================================================================
+        services = config.get('services', [])
+
+        if 'harbor' in services:
+            print(f"[DEPLOY] Deploying Harbor Container Registry...")
+            try:
+                harbor_vmid = client.get_next_vmid()
+                harbor_password = config.get('harbor_admin_password') or admin_password
+                enable_trivy = config.get('harbor_trivy', True)
+
+                # Check for Debian template
+                templates = client.get_available_templates(selected_node, 'local')
+                debian_template = None
+                for t in templates:
+                    if 'debian' in t.get('volid', '').lower():
+                        debian_template = t['volid']
+                        break
+                if not debian_template:
+                    debian_template = 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst'
+
+                # Get IP config for Harbor
+                harbor_ip_config = get_ip_config('harbor')
+
+                # Create Harbor container (privileged for Docker)
+                result = client.create_container(
+                    node=selected_node,
+                    vmid=harbor_vmid,
+                    hostname='harbor',
+                    ostemplate=debian_template,
+                    storage=storage,
+                    rootfs_size=100,  # Harbor needs more storage for images
+                    cores=4,
+                    memory=8192,
+                    bridge=bridge,
+                    ip=harbor_ip_config,
+                    gateway=network_gateway if harbor_ip_config != 'dhcp' else None,
+                    password=harbor_password,
+                    start=True,
+                    privileged=True,
+                    features='nesting=1,keyctl=1'
+                )
+
+                if result['success']:
+                    created.append({
+                        'vmid': harbor_vmid,
+                        'name': 'harbor',
+                        'type': 'lxc',
+                        'os': 'harbor',
+                        'status': 'created',
+                        'ip_config': harbor_ip_config,
+                        'resources': '4 CPU, 8GB RAM, 100GB disk'
+                    })
+
+                    # Provision Harbor in background
+                    def provision_harbor(vmid, pw, trivy, gitlab_integration, gitlab_url_param, gitlab_token):
+                        from .proxmox_client import get_harbor_install_script
+                        time.sleep(10)  # Wait for container to fully start
+                        ip = client.get_container_ip(selected_node, vmid)
+                        if ip:
+                            script = get_harbor_install_script(
+                                admin_password=pw,
+                                enable_trivy=trivy
+                            )
+                            client.provision_container(selected_node, vmid, script)
+
+                            # Configure GitLab integration if requested
+                            if gitlab_integration and gitlab_url_param and gitlab_token:
+                                configure_gitlab_harbor_integration(
+                                    gitlab_url_param, gitlab_token, ip, pw
+                                )
+
+                    thread = threading.Thread(
+                        target=provision_harbor,
+                        args=(harbor_vmid, harbor_password, enable_trivy,
+                              config.get('harbor_gitlab_integration', False),
+                              gitlab_url if not deploy_gitlab else f'https://{domain}',
+                              runner_token),
+                        daemon=True
+                    )
+                    thread.start()
+                    created[-1]['status'] = 'provisioning'
+                else:
+                    errors.append(f'Harbor: {result.get("error", "Creation failed")}')
+
+            except Exception as e:
+                errors.append(f'Harbor: {str(e)}')
+
+        if 'rancher' in services:
+            print(f"[DEPLOY] Deploying Rancher Server...")
+            try:
+                rancher_vmid = client.get_next_vmid()
+                rancher_bootstrap_pw = config.get('rancher_bootstrap_password', '')
+
+                # Check for Debian template
+                templates = client.get_available_templates(selected_node, 'local')
+                debian_template = None
+                for t in templates:
+                    if 'debian' in t.get('volid', '').lower():
+                        debian_template = t['volid']
+                        break
+                if not debian_template:
+                    debian_template = 'local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst'
+
+                # Get IP config for Rancher
+                rancher_ip_config = get_ip_config('rancher')
+
+                # Create Rancher container (privileged for Docker/K3s)
+                result = client.create_container(
+                    node=selected_node,
+                    vmid=rancher_vmid,
+                    hostname='rancher',
+                    ostemplate=debian_template,
+                    storage=storage,
+                    rootfs_size=50,
+                    cores=4,
+                    memory=8192,
+                    bridge=bridge,
+                    ip=rancher_ip_config,
+                    gateway=network_gateway if rancher_ip_config != 'dhcp' else None,
+                    password=admin_password,
+                    start=True,
+                    privileged=True,
+                    features='nesting=1,keyctl=1'
+                )
+
+                if result['success']:
+                    created.append({
+                        'vmid': rancher_vmid,
+                        'name': 'rancher',
+                        'type': 'lxc',
+                        'os': 'rancher',
+                        'status': 'created',
+                        'ip_config': rancher_ip_config,
+                        'resources': '4 CPU, 8GB RAM, 50GB disk'
+                    })
+
+                    # Provision Rancher in background
+                    def provision_rancher(vmid, bootstrap_pw):
+                        from .proxmox_client import get_rancher_install_script
+                        time.sleep(10)  # Wait for container to fully start
+                        ip = client.get_container_ip(selected_node, vmid)
+                        if ip:
+                            script = get_rancher_install_script(bootstrap_password=bootstrap_pw)
+                            client.provision_container(selected_node, vmid, script)
+
+                    thread = threading.Thread(
+                        target=provision_rancher,
+                        args=(rancher_vmid, rancher_bootstrap_pw),
+                        daemon=True
+                    )
+                    thread.start()
+                    created[-1]['status'] = 'provisioning'
+                else:
+                    errors.append(f'Rancher: {result.get("error", "Creation failed")}')
+
+            except Exception as e:
+                errors.append(f'Rancher: {str(e)}')
 
         # =====================================================================
         # Build Response
@@ -2078,3 +2268,47 @@ def get_providers():
             }
         }
     })
+
+
+def configure_gitlab_harbor_integration(gitlab_url, gitlab_token, harbor_ip, harbor_password):
+    """Configure GitLab CI/CD variables to use Harbor registry"""
+    try:
+        import requests
+        import urllib3
+        urllib3.disable_warnings()
+
+        headers = {'PRIVATE-TOKEN': gitlab_token}
+
+        # Variables to add
+        variables = [
+            {'key': 'HARBOR_URL', 'value': harbor_ip, 'protected': False, 'masked': False},
+            {'key': 'HARBOR_USERNAME', 'value': 'admin', 'protected': False, 'masked': False},
+            {'key': 'HARBOR_PASSWORD', 'value': harbor_password, 'protected': False, 'masked': False},
+            {'key': 'HARBOR_PROJECT', 'value': 'gitlab-builds', 'protected': False, 'masked': False},
+        ]
+
+        # Try to add instance-level variables
+        for var in variables:
+            r = requests.post(
+                f'{gitlab_url}/api/v4/admin/ci/variables',
+                headers=headers,
+                json=var,
+                verify=False,
+                timeout=30
+            )
+            if r.status_code == 400 and 'has already been taken' in r.text:
+                # Update existing variable
+                requests.put(
+                    f'{gitlab_url}/api/v4/admin/ci/variables/{var["key"]}',
+                    headers=headers,
+                    json=var,
+                    verify=False,
+                    timeout=30
+                )
+
+        print(f"[HARBOR] GitLab CI/CD variables configured for Harbor at {harbor_ip}")
+        return True
+
+    except Exception as e:
+        print(f"[HARBOR] Failed to configure GitLab integration: {e}")
+        return False

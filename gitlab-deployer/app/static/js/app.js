@@ -14,6 +14,12 @@ const RUNNER_RESOURCES = {
     'macos': { cpu: 4, memory: 8, storage: 80 }
 };
 
+// Additional service resource requirements
+const SERVICE_RESOURCES = {
+    'harbor': { cpu: 4, memory: 8, storage: 100 },
+    'rancher': { cpu: 4, memory: 8, storage: 50 }
+};
+
 // Store node capacity after successful connection test
 let nodeCapacity = null;
 
@@ -178,6 +184,12 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedRunners.push(checkbox.value);
         });
 
+        // Collect selected additional services
+        const selectedServices = [];
+        document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
+            selectedServices.push(checkbox.value);
+        });
+
         // Validate at least one runner is selected
         if (selectedRunners.length === 0) {
             showStatus('error', 'Please select at least one runner platform');
@@ -211,6 +223,12 @@ document.addEventListener('DOMContentLoaded', function() {
             admin_password: deployGitlab ? document.getElementById('adminPassword').value : '',
             letsencrypt_enabled: deployGitlab ? document.getElementById('letsencrypt').checked : false,
             runners: selectedRunners,
+            // Additional services (Harbor, Rancher)
+            services: selectedServices,
+            harbor_admin_password: selectedServices.includes('harbor') ? (document.getElementById('harborAdminPassword')?.value || '') : '',
+            harbor_trivy: selectedServices.includes('harbor') ? (document.getElementById('harborTrivy')?.checked ?? true) : false,
+            harbor_gitlab_integration: selectedServices.includes('harbor') ? (document.getElementById('harborGitlabIntegration')?.checked ?? true) : false,
+            rancher_bootstrap_password: selectedServices.includes('rancher') ? (document.getElementById('rancherBootstrapPassword')?.value || '') : '',
             // Traefik settings (only for new GitLab)
             traefik_enabled: deployGitlab ? document.getElementById('traefik').checked : false,
             base_domain: deployGitlab ? (document.getElementById('baseDomain')?.value || '') : '',
@@ -233,7 +251,12 @@ document.addEventListener('DOMContentLoaded', function() {
         };
 
         // Show loading status
-        showStatus('info', `Preparing to deploy GitLab server${selectedRunners.length > 0 ? ' and ' + selectedRunners.length + ' runner(s)' : ''}...`);
+        let statusMsg = 'Preparing to deploy';
+        if (deployGitlab) statusMsg += ' GitLab server';
+        if (selectedRunners.length > 0) statusMsg += ` and ${selectedRunners.length} runner(s)`;
+        if (selectedServices.length > 0) statusMsg += ` + ${selectedServices.join(', ')}`;
+        statusMsg += '...';
+        showStatus('info', statusMsg);
         showSpinner();
 
         // Send deployment request
@@ -252,7 +275,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 showDeploymentPlan(data.deployment_plan);
 
                 // Ask for confirmation before executing
-                if (confirm(`Ready to deploy:\n- GitLab Server\n- ${selectedRunners.length} Runner(s)\n\nThis may take 30-60 minutes. Continue?`)) {
+                let confirmMsg = 'Ready to deploy:\n';
+                if (deployGitlab) confirmMsg += '- GitLab Server\n';
+                confirmMsg += `- ${selectedRunners.length} Runner(s)\n`;
+                if (selectedServices.includes('harbor')) confirmMsg += '- Harbor Container Registry\n';
+                if (selectedServices.includes('rancher')) confirmMsg += '- Rancher Server\n';
+                confirmMsg += '\nThis may take 30-60 minutes. Continue?';
+                if (confirm(confirmMsg)) {
                     executeDeployment(data.deployment_id);
                 }
             } else {
@@ -275,6 +304,26 @@ function updateSelectedCount() {
     }
 }
 
+// Update service selection and toggle config sections
+function updateServiceResources() {
+    // Toggle Harbor config section
+    const harborChecked = document.querySelector('input[name="services"][value="harbor"]')?.checked;
+    const harborConfig = document.getElementById('harborConfig');
+    if (harborConfig) {
+        harborConfig.style.display = harborChecked ? 'block' : 'none';
+    }
+
+    // Toggle Rancher config section
+    const rancherChecked = document.querySelector('input[name="services"][value="rancher"]')?.checked;
+    const rancherConfig = document.getElementById('rancherConfig');
+    if (rancherConfig) {
+        rancherConfig.style.display = rancherChecked ? 'block' : 'none';
+    }
+
+    // Update resource totals to include services
+    updateResourceTotals();
+}
+
 // Calculate and update resource totals
 function updateResourceTotals() {
     // Determine GitLab mode
@@ -290,6 +339,17 @@ function updateResourceTotals() {
     document.querySelectorAll('input[name="runners"]:checked').forEach(checkbox => {
         const runner = checkbox.value;
         const resources = RUNNER_RESOURCES[runner];
+        if (resources) {
+            totalCpu += resources.cpu;
+            totalMemory += resources.memory;
+            totalStorage += resources.storage;
+        }
+    });
+
+    // Add service requirements (Harbor, Rancher)
+    document.querySelectorAll('input[name="services"]:checked').forEach(checkbox => {
+        const service = checkbox.value;
+        const resources = SERVICE_RESOURCES[service];
         if (resources) {
             totalCpu += resources.cpu;
             totalMemory += resources.memory;

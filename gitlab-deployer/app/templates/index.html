@@ -550,6 +550,72 @@
                     </div>
                 </div>
 
+                <!-- Additional Services Section -->
+                <div class="form-section collapsible">
+                    <div class="section-header clickable" onclick="toggleSection(this)">
+                        <h2><span class="collapse-icon">&#9660;</span> Additional Services (Optional)</h2>
+                    </div>
+                    <div class="section-content">
+                        <p class="section-description">Deploy additional infrastructure services alongside your GitLab build farm.</p>
+
+                        <div class="runner-section">
+                            <h3>Container Registry</h3>
+                            <div class="runner-grid">
+                                <label class="runner-option">
+                                    <input type="checkbox" name="services" value="harbor" onchange="updateServiceResources()">
+                                    <span class="runner-card">
+                                        <span class="checkbox-indicator"></span>
+                                        <strong>Harbor Registry</strong>
+                                        <small>Enterprise container registry with vulnerability scanning</small>
+                                    </span>
+                                </label>
+                            </div>
+                            <div id="harborConfig" class="conditional-options" style="display: none; margin-top: 10px;">
+                                <div class="form-group">
+                                    <label for="harborAdminPassword">Harbor Admin Password:</label>
+                                    <input type="password" id="harborAdminPassword" name="harborAdminPassword" placeholder="Leave blank to use GitLab admin password">
+                                    <small>Password for Harbor admin user (default: same as GitLab)</small>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="harborTrivy" name="harborTrivy" checked>
+                                        Enable Trivy Vulnerability Scanner
+                                    </label>
+                                    <small class="checkbox-help">Automatically scan images for security vulnerabilities</small>
+                                </div>
+                                <div class="form-group checkbox-group">
+                                    <label>
+                                        <input type="checkbox" id="harborGitlabIntegration" name="harborGitlabIntegration" checked>
+                                        Auto-configure GitLab CI/CD Integration
+                                    </label>
+                                    <small class="checkbox-help">Automatically add Harbor credentials to GitLab CI/CD variables</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="runner-section">
+                            <h3>Kubernetes Management</h3>
+                            <div class="runner-grid">
+                                <label class="runner-option">
+                                    <input type="checkbox" name="services" value="rancher" onchange="updateServiceResources()">
+                                    <span class="runner-card">
+                                        <span class="checkbox-indicator"></span>
+                                        <strong>Rancher Server</strong>
+                                        <small>Kubernetes cluster management platform</small>
+                                    </span>
+                                </label>
+                            </div>
+                            <div id="rancherConfig" class="conditional-options" style="display: none; margin-top: 10px;">
+                                <div class="form-group">
+                                    <label for="rancherBootstrapPassword">Rancher Bootstrap Password:</label>
+                                    <input type="password" id="rancherBootstrapPassword" name="rancherBootstrapPassword" placeholder="Leave blank to auto-generate">
+                                    <small>Initial bootstrap password (shown in deployment logs if auto-generated)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="button-group">
                     <button type="submit" class="btn btn-primary">Deploy Build Farm</button>
                     <button type="button" class="btn btn-secondary" onclick="resetForm()">Reset</button>

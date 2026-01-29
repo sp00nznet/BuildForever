@@ -1280,7 +1280,8 @@ echo ============================================'''
 
     def create_container(self, node, vmid, hostname, ostemplate, storage, rootfs_size,
                          cores=2, memory=4096, bridge='vmbr0', ip='dhcp',
-                         gateway=None, ssh_keys=None, password=None, start=False):
+                         gateway=None, ssh_keys=None, password=None, start=False,
+                         privileged=False, features=None):
         """Create an LXC container."""
         params = {
             'vmid': vmid,
@@ -1290,10 +1291,14 @@ echo ============================================'''
             'rootfs': f'{storage}:{rootfs_size}',
             'cores': cores,
             'memory': memory,
-            'unprivileged': 1,
+            'unprivileged': 0 if privileged else 1,
             'onboot': 1,
             'start': 1 if start else 0,
         }
+
+        # Add features for Docker support (nesting, etc.)
+        if features:
+            params['features'] = features
 
         # Network configuration
         if ip == 'dhcp':
@@ -2391,4 +2396,114 @@ mkdir -p {mount_path}
 mount -t smbfs {auth_param} {mount_path}
 # Add to auto-mount (launchd would be needed for persistence)
 echo "Samba share mounted at {mount_path}"
+'''
+
+
+def get_harbor_install_script(admin_password='Harbor12345', enable_trivy=True):
+    """Get Harbor container registry installation script."""
+    trivy_flag = '--with-trivy' if enable_trivy else ''
+
+    return f'''#!/bin/bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+echo "=== Installing Harbor Container Registry ==="
+
+# Install Docker
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -qq
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable docker
+systemctl start docker
+
+# Download Harbor
+cd /opt
+HARBOR_VERSION="v2.12.2"
+echo "Downloading Harbor $HARBOR_VERSION..."
+curl -sLO https://github.com/goharbor/harbor/releases/download/$HARBOR_VERSION/harbor-online-installer-$HARBOR_VERSION.tgz
+tar xzf harbor-online-installer-$HARBOR_VERSION.tgz
+cd harbor
+
+# Get container IP
+HARBOR_IP=$(ip addr show eth0 | grep 'inet ' | awk '{{print $2}}' | cut -d/ -f1)
+
+# Configure harbor.yml
+cp harbor.yml.tmpl harbor.yml
+sed -i "s/hostname: reg.mydomain.com/hostname: $HARBOR_IP/" harbor.yml
+sed -i "s/harbor_admin_password: Harbor12345/harbor_admin_password: {admin_password}/" harbor.yml
+
+# Disable HTTPS for now (use reverse proxy for SSL)
+sed -i '/^https:/,/private_key:/{{s/^/#/}}' harbor.yml
+
+# Install Harbor
+echo "Installing Harbor..."
+./install.sh {trivy_flag}
+
+# Create default project for GitLab builds
+sleep 30  # Wait for Harbor to fully start
+curl -s -u "admin:{admin_password}" -X POST "http://localhost/api/v2.0/projects" \\
+    -H "Content-Type: application/json" \\
+    -d '{{"project_name": "gitlab-builds", "public": false, "metadata": {{"auto_scan": "true"}}}}' || true
+
+echo ""
+echo "=== Harbor Installation Complete ==="
+echo "URL: http://$HARBOR_IP"
+echo "Username: admin"
+echo "Password: {admin_password}"
+echo "Default project: gitlab-builds"
+'''
+
+
+def get_rancher_install_script(bootstrap_password=''):
+    """Get Rancher server installation script."""
+    bootstrap_arg = f'--set bootstrapPassword={bootstrap_password}' if bootstrap_password else ''
+
+    return f'''#!/bin/bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+echo "=== Installing Rancher Server ==="
+
+# Install Docker
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -qq
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable docker
+systemctl start docker
+
+# Get container IP
+RANCHER_IP=$(ip addr show eth0 | grep 'inet ' | awk '{{print $2}}' | cut -d/ -f1)
+
+# Deploy Rancher
+echo "Deploying Rancher..."
+docker run -d --name rancher --restart=unless-stopped \\
+    -p 80:80 -p 443:443 \\
+    --privileged \\
+    rancher/rancher:latest
+
+# Wait for Rancher to start
+echo "Waiting for Rancher to initialize (this takes 2-3 minutes)..."
+sleep 120
+
+# Get bootstrap password from logs if not set
+if [ -z "{bootstrap_password}" ]; then
+    echo ""
+    echo "=== Rancher Bootstrap Password ==="
+    docker logs rancher 2>&1 | grep -i "Bootstrap Password" || echo "Check logs with: docker logs rancher 2>&1 | grep Bootstrap"
+fi
+
+echo ""
+echo "=== Rancher Installation Complete ==="
+echo "URL: https://$RANCHER_IP"
+echo "Initial setup requires the bootstrap password from the logs above."
 '''
